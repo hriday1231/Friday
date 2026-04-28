@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Friday Settings</title>
+  <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/settings.css" />
+</head>
+<body>
+  <div id="settingsApp" class="settings-app">
+    <div class="settings-topbar">
+      <div class="settings-topbar-title">
+        <div class="settings-topbar-heading">Settings</div>
+        <div class="settings-topbar-subtitle">Manage integrations, models, and shortcuts.</div>
+      </div>
+      <div class="settings-topbar-actions">
+        <button id="refreshStatusBtn" class="settings-action-btn">Refresh status</button>
+        <button id="saveAllBtn" class="settings-primary-btn">Save changes</button>
+      </div>
+    </div>
+
+    <div class="settings-shell">
+      <nav class="settings-nav" aria-label="Settings navigation">
+        <button class="settings-nav-item active" data-page="integrations">Integrations</button>
+        <button class="settings-nav-item" data-page="models">Models & API Keys</button>
+        <button class="settings-nav-item" data-page="shortcuts">App shortcuts</button>
+        <button class="settings-nav-item" data-page="bookmarks">Bookmarks</button>
+        <button class="settings-nav-item" data-page="memory">Memory</button>
+        <button class="settings-nav-item" data-page="voice">Voice</button>
+        <button class="settings-nav-item" data-page="persona">Persona</button>
+        <button class="settings-nav-item" data-page="training">Training</button>
+      </nav>
+
+      <main class="settings-main">
+        <section class="settings-page" id="page-integrations">
+          <h2 class="settings-page-title">Integrations</h2>
+          <p class="settings-page-hint">Use the test buttons to verify configuration. Google connect may open your browser.</p>
+
+          <div class="settings-cards">
+            <div class="settings-card" id="card-ollama">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">Ollama</div>
+                  <div class="settings-card-subtitle">Local model server</div>
+                </div>
+                <span class="settings-badge" id="badge-ollama">—</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">Server URL
+                  <input type="text" id="ollamaUrlInput" class="settings-text-input" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false">
+                </label>
+                <div id="body-ollama" style="margin-top:6px;font-size:12px;color:var(--t-mid)">Loading…</div>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveOllamaUrlBtn">Save URL</button>
+                <button class="settings-action-btn" data-test="ollama">Test Ollama</button>
+              </div>
+            </div>
+
+            <div class="settings-card" id="card-google">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">Google Calendar</div>
+                  <div class="settings-card-subtitle">Calendar events sync</div>
+                </div>
+                <span class="settings-badge" id="badge-google">—</span>
+              </div>
+              <div class="settings-card-body" id="body-google">Loading…</div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="googleConnectBtn">Connect / Re-auth</button>
+                <button class="settings-danger-btn" id="googleLogoutBtn">Logout</button>
+                <button class="settings-action-btn" data-test="google">Test Google</button>
+              </div>
+            </div>
+
+            <div class="settings-card" id="card-screen-context">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">Screen Context</div>
+                  <div class="settings-card-subtitle">Ambient screen awareness — Friday sees what you're working on (opt-in)</div>
+                </div>
+                <span class="settings-badge" id="badge-screen-context">Off</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label" style="margin-bottom:10px">
+                  <input type="checkbox" id="screenContextEnabled" style="margin-right:6px">
+                  Enable screen context
+                </label>
+                <label class="settings-field-label">Capture interval (seconds)
+                  <input type="number" id="screenContextInterval" class="settings-text-input" min="15" max="3600" placeholder="60" style="margin-top:4px">
+                </label>
+                <p class="settings-hint" style="margin-top:8px">Captures a screenshot every N seconds and sends it to your vision model. The text description is injected into Friday's context so she knows what's on your screen.</p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-primary-btn" id="saveScreenContextBtn">Save</button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">App Settings</div>
+                  <div class="settings-card-subtitle">Global shortcut and behaviour</div>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">Global hotkey
+                  <input type="text" id="hotkeyInput" class="settings-text-input" placeholder="CommandOrControl+Shift+Space" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="settings-hint" style="margin-top:5px">Reopens Friday from anywhere. Uses Electron accelerator syntax (e.g. <code>Alt+Space</code>, <code>CommandOrControl+Shift+F</code>).</p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveHotkeyBtn">Save hotkey</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Models page ──────────────────────────────────────────── -->
+        <section class="settings-page hidden" id="page-models">
+          <h2 class="settings-page-title">Models & API Keys</h2>
+          <p class="settings-page-hint">Configure local model slots and cloud API keys. Model slots auto-select the right model based on context (vision, chat, cloud).</p>
+
+          <!-- API Keys section -->
+          <h3 class="settings-section-title" style="margin-bottom:12px">API Keys</h3>
+          <div class="api-keys-grid">
+
+            <!-- Groq -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">🟠 Groq Cloud</div>
+                  <div class="settings-card-subtitle">Llama 3.3 70B, DeepSeek R1, Mixtral — ultra-fast</div>
+                </div>
+                <span class="settings-badge" id="badge-groq">—</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">API Key
+                  <input type="password" id="groqApiKeyInput" class="settings-text-input" placeholder="gsk_…" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="settings-hint" style="margin-top:5px">Free at <a class="settings-link" id="groqLink">console.groq.com</a></p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveGroqKeyBtn">Save</button>
+                <button class="settings-action-btn" id="testGroqBtn">Test</button>
+              </div>
+            </div>
+
+            <!-- Gemini -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">🔵 Gemini</div>
+                  <div class="settings-card-subtitle">Google Gemini 2.0/2.5 Flash & Pro</div>
+                </div>
+                <span class="settings-badge" id="badge-gemini-models">—</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">API Key
+                  <input type="password" id="geminiApiKeyInput" class="settings-text-input" placeholder="AIza…" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="settings-hint" style="margin-top:5px">Free at <a class="settings-link" id="geminiLink">aistudio.google.com</a></p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveGeminiKeyBtn">Save</button>
+                <button class="settings-action-btn" id="testGeminiBtn">Test</button>
+              </div>
+            </div>
+
+            <!-- Brave Search -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">🦁 Brave Search</div>
+                  <div class="settings-card-subtitle">Web search tool for all agents</div>
+                </div>
+                <span class="settings-badge" id="badge-brave-models">—</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">API Key
+                  <input type="password" id="braveApiKeyInput" class="settings-text-input" placeholder="BSA…" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="settings-hint" style="margin-top:5px">Free tier at <a class="settings-link" id="braveLink">api.search.brave.com</a></p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveBraveKeyBtn">Save</button>
+                <button class="settings-action-btn" id="testBraveBtn">Test</button>
+              </div>
+            </div>
+
+            <!-- OpenRouter -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div>
+                  <div class="settings-card-title">🟣 OpenRouter</div>
+                  <div class="settings-card-subtitle">200+ models via one API — Claude, GPT-4o, Llama & more</div>
+                </div>
+                <span class="settings-badge" id="badge-openrouter">—</span>
+              </div>
+              <div class="settings-card-body">
+                <label class="settings-field-label">API Key
+                  <input type="password" id="openrouterApiKeyInput" class="settings-text-input" placeholder="sk-or-…" autocomplete="off" spellcheck="false">
+                </label>
+                <p class="settings-hint" style="margin-top:5px">Free credits at <a class="settings-link" id="openrouterLink">openrouter.ai/keys</a></p>
+              </div>
+              <div class="settings-card-actions">
+                <button class="settings-action-btn" id="saveOpenRouterKeyBtn">Save</button>
+                <button class="settings-action-btn" id="testOpenRouterBtn">Test</button>
+              </div>
+            </div>
+
+          </div><!-- /.api-keys-grid -->
+          <div style="margin-top:24px"></div>
+
+          <!-- Model Slots -->
+          <h3 class="settings-section-title">Model Slots</h3>
+          <p class="settings-page-hint" style="margin-bottom:14px">Friday auto-selects these based on context. You can still switch manually using the model pill in the chat input.</p>
+
+          <div class="model-slots-grid">
+            <div class="model-slot-card">
+              <div class="model-slot-label">💬 Chat model</div>
+              <div class="model-slot-hint">Default for all conversation</div>
+              <select class="model-slot-select" id="slot-chat-model"></select>
+              <select class="model-slot-type" id="slot-chat-type">
+                <option value="ollama">Ollama</option>
+                <option value="groq">Groq</option>
+                <option value="gemini">Gemini</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+            </div>
+
+            <div class="model-slot-card">
+              <div class="model-slot-label">👁 Vision model</div>
+              <div class="model-slot-hint">Auto-selected when image is attached</div>
+              <select class="model-slot-select" id="slot-vision-model"></select>
+              <select class="model-slot-type" id="slot-vision-type">
+                <option value="ollama">Ollama</option>
+                <option value="groq">Groq</option>
+                <option value="gemini">Gemini</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+            </div>
+
+            <div class="model-slot-card">
+              <div class="model-slot-label">☁ Cloud fallback</div>
+              <div class="model-slot-hint">Groq / Gemini when local is too slow</div>
+              <select class="model-slot-select" id="slot-cloud-model"></select>
+              <select class="model-slot-type" id="slot-cloud-type">
+                <option value="groq">Groq</option>
+                <option value="ollama">Ollama</option>
+                <option value="gemini">Gemini</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="margin-top:18px">
+            <button class="settings-primary-btn" id="saveModelSlotsBtn">Save model slots</button>
+          </div>
+        </section>
+
+        <section class="settings-page hidden" id="page-shortcuts">
+          <h2 class="settings-page-title">App shortcuts</h2>
+          <p class="settings-page-hint">Friendly names Friday can launch (e.g. Code, Steam).</p>
+
+          <table class="settings-table" id="appShortcutsTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Path</th>
+                <th>Args</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="settings-row">
+            <button id="addAppShortcutBtn" class="settings-action-btn">Add shortcut</button>
+          </div>
+        </section>
+
+        <section class="settings-page hidden" id="page-bookmarks">
+          <h2 class="settings-page-title">Bookmarks</h2>
+          <p class="settings-page-hint">Frequently used sites Friday can open by name.</p>
+
+          <table class="settings-table" id="webBookmarksTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="settings-row">
+            <button id="addBookmarkBtn" class="settings-action-btn">Add bookmark</button>
+          </div>
+        </section>
+
+        <!-- ── Memory ─────────────────────────────────────────────────── -->
+        <section class="settings-page hidden" id="page-memory">
+          <h2 class="settings-page-title">Memory</h2>
+          <p class="settings-page-hint">
+            What Friday knows about you. Say <strong>"remember that…"</strong> in chat to add facts,
+            or manage everything here. Preferences and behavioral patterns are always injected — other facts are retrieved by relevance.
+          </p>
+
+          <!-- category filter tabs -->
+          <div class="memory-cats" id="memoryCats">
+            <button class="memory-cat active" data-cat="all">All</button>
+            <button class="memory-cat" data-cat="preference">Preferences</button>
+            <button class="memory-cat" data-cat="procedural">Behavioral</button>
+            <button class="memory-cat" data-cat="project">Projects</button>
+            <button class="memory-cat" data-cat="entity">Entities</button>
+            <button class="memory-cat" data-cat="fact">Facts</button>
+          </div>
+
+          <!-- toolbar: search + count + clear all -->
+          <div class="memory-toolbar">
+            <div class="memory-search-wrap">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input id="memorySearchInput" class="memory-search-input" placeholder="Filter memories…" autocomplete="off">
+            </div>
+            <span id="memoryCount" class="memory-count"></span>
+            <button id="clearAllMemoryBtn" class="settings-danger-btn memory-clear-btn" title="Delete all memories">Clear all</button>
+          </div>
+
+          <div class="memory-list" id="memoryList">
+            <!-- Filled dynamically -->
+          </div>
+
+          <div class="memory-add-row">
+            <input type="text" id="newMemoryInput" class="memory-new-input"
+              placeholder="Add a memory (e.g. I prefer concise answers)…" />
+            <select id="newMemoryCategory" class="memory-cat-select">
+              <option value="fact">Fact</option>
+              <option value="preference">Preference</option>
+              <option value="project">Project</option>
+              <option value="entity">Entity</option>
+            </select>
+            <button id="addMemoryBtn" class="settings-primary-btn">Add</button>
+          </div>
+        </section>
+
+        <!-- ── Voice / Whisper ──────────────────────────────────────── -->
+        <section class="settings-page hidden" id="page-voice">
+          <h2 class="settings-page-title">Voice Input</h2>
+          <p class="settings-page-hint">
+            Local Whisper transcription — audio never leaves your machine.
+            Point Friday to your <code>whisper-cli.exe</code> and model file.
+          </p>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Whisper CLI</div>
+                <div class="settings-card-subtitle">Local speech recognition via whisper.cpp</div>
+              </div>
+              <span class="settings-badge" id="badge-whisper">—</span>
+            </div>
+            <div class="settings-card-body">
+              <div class="voice-field-row">
+                <label class="voice-label">whisper-cli.exe path</label>
+                <input type="text" id="whisperExePath" class="voice-input"
+                  placeholder="C:\Whisper\Release\whisper-cli.exe" />
+              </div>
+              <div class="voice-field-row">
+                <label class="voice-label">Model file (.bin)</label>
+                <input type="text" id="whisperModelPath" class="voice-input"
+                  placeholder="C:\Whisper\ggml-large-v3-turbo.bin" />
+              </div>
+            </div>
+            <div class="settings-card-actions">
+              <button id="saveWhisperBtn" class="settings-primary-btn">Save</button>
+              <button id="testWhisperBtn" class="settings-action-btn">Test paths</button>
+            </div>
+          </div>
+
+          <div class="settings-card" id="card-tts" style="margin-top:12px">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Voice Output (TTS)</div>
+                <div class="settings-card-subtitle">Read responses aloud using the system voice engine</div>
+              </div>
+              <span class="settings-badge" id="badge-tts">Off</span>
+            </div>
+            <div class="settings-card-body">
+              <label class="settings-field-label" style="margin-bottom:10px">
+                <input type="checkbox" id="ttsAutoRead" style="margin-right:6px">
+                Auto-read every response
+              </label>
+              <label class="settings-field-label" style="margin-bottom:10px">Voice
+                <select id="ttsVoiceSelect" class="settings-text-input" style="margin-top:4px">
+                  <option value="">System default</option>
+                </select>
+              </label>
+              <label class="settings-field-label" style="margin-bottom:10px">Speed
+                <input type="range" id="ttsRate" min="0.5" max="2" step="0.1" value="1" style="margin-top:4px;width:100%">
+                <span id="ttsRateVal" style="font-size:11px;color:var(--t-mid)">1.0×</span>
+              </label>
+              <label class="settings-field-label">Pitch
+                <input type="range" id="ttsPitch" min="0.5" max="2" step="0.1" value="1" style="margin-top:4px;width:100%">
+                <span id="ttsPitchVal" style="font-size:11px;color:var(--t-mid)">1.0</span>
+              </label>
+            </div>
+            <div class="settings-card-actions">
+              <button class="settings-primary-btn" id="saveTtsBtn">Save</button>
+              <button class="settings-action-btn" id="testTtsBtn">Test voice</button>
+            </div>
+          </div>
+
+          <div class="settings-card" id="card-wake-word" style="margin-top:12px">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Wake Word</div>
+                <div class="settings-card-subtitle">Always-on listening — say the phrase to activate Friday hands-free</div>
+              </div>
+              <span class="settings-badge" id="badge-wake-word">Off</span>
+            </div>
+            <div class="settings-card-body">
+              <label class="settings-field-label" style="margin-bottom:10px">
+                <input type="checkbox" id="wakeWordEnabled" style="margin-right:6px">
+                Enable wake word detection
+              </label>
+              <label class="settings-field-label" style="margin-bottom:6px">Wake phrase
+                <input type="text" id="wakeWordPhrase" class="settings-text-input" placeholder="hey friday" style="margin-top:4px">
+              </label>
+              <p style="font-size:11.5px;color:var(--t-mid);margin:6px 0 0">
+                Requires Whisper to be configured. The phrase is matched case-insensitively anywhere
+                in the transcription. Any words after the phrase are sent as a command automatically.
+              </p>
+            </div>
+            <div class="settings-card-actions">
+              <button class="settings-primary-btn" id="saveWakeWordBtn">Save</button>
+            </div>
+          </div>
+
+          <div class="settings-card" style="margin-top:12px">
+            <div class="settings-card-body" style="font-size:12.5px;line-height:1.7;color:var(--t-mid)">
+              <strong style="color:var(--t-hi)">How it works:</strong><br>
+              Click the 🎤 mic button in the chat input, speak, then click it again to stop.
+              Whisper transcribes the recording locally using your GPU (CUDA) — typically under 1 second
+              for short clips on an RTX-class card.<br><br>
+              <strong style="color:var(--t-hi)">Falls back to OS speech recognition</strong> if Whisper
+              paths are not configured.
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Persona / Custom system prompt ────────────────────────── -->
+        <section class="settings-page hidden" id="page-persona">
+          <h2 class="settings-page-title">Persona</h2>
+          <p class="settings-page-hint">
+            Add extra instructions that are always included in Friday's system prompt.
+            Use this to set her tone, expertise focus, language preference, or anything else.
+          </p>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Additional instructions</div>
+                <div class="settings-card-subtitle">Appended to the system prompt on every message</div>
+              </div>
+            </div>
+            <div class="settings-card-body">
+              <textarea
+                id="customPromptTextarea"
+                class="persona-textarea"
+                placeholder="e.g. Always respond in a concise, technical style. Prefer bullet points. When writing code, default to Python unless specified."
+                rows="8"
+              ></textarea>
+            </div>
+            <div class="settings-card-actions">
+              <button id="savePersonaBtn" class="settings-primary-btn">Save</button>
+              <button id="clearPersonaBtn" class="settings-danger-btn">Clear</button>
+            </div>
+          </div>
+
+          <div class="settings-card" style="margin-top:12px">
+            <div class="settings-card-body" style="font-size:12.5px;line-height:1.7;color:var(--t-mid)">
+              <strong style="color:var(--t-hi)">Examples:</strong><br>
+              • <em>"Always be concise. No filler words."</em><br>
+              • <em>"I'm an ML researcher. Assume deep technical knowledge."</em><br>
+              • <em>"Respond in Spanish unless I write in English first."</em><br>
+              • <em>"Format every code block with type annotations."</em>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-page hidden" id="page-training">
+          <h2 class="settings-page-title">Training Data</h2>
+          <p class="settings-page-hint">
+            Export thumbs-up exchanges as JSONL for fine-tuning. Each approved response becomes a training example.
+          </p>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Fine-tuning export</div>
+                <div class="settings-card-subtitle" id="trainingCount">Loading…</div>
+              </div>
+            </div>
+            <div class="settings-card-body">
+              <label class="settings-field-label" style="margin-bottom:10px">Format
+                <select id="trainingFormatSelect" class="settings-text-input" style="margin-top:4px">
+                  <option value="openai">OpenAI / llama.cpp chat format</option>
+                  <option value="alpaca">Alpaca instruction format</option>
+                  <option value="raw">Raw pairs (user + assistant JSON lines)</option>
+                </select>
+              </label>
+              <div id="trainingPreview" class="training-preview" style="display:none"></div>
+            </div>
+            <div class="settings-card-actions">
+              <button id="trainingPreviewBtn" class="settings-action-btn">Preview</button>
+              <button id="trainingExportBtn" class="settings-primary-btn">Export JSONL…</button>
+            </div>
+          </div>
+
+          <div class="settings-card" style="margin-top:12px">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">How to use</div>
+              </div>
+            </div>
+            <div class="settings-card-body" style="font-size:12.5px;line-height:1.8;color:var(--t-mid)">
+              1. Rate responses with 👍 during normal chat to build your dataset.<br>
+              2. Export here when you have enough examples (50+ recommended).<br>
+              3. Fine-tune with llama.cpp:<br>
+              <code style="font-size:11px;display:block;margin:6px 0;padding:6px 8px;background:var(--s1);border-radius:4px;color:var(--t-hi)">./finetune --model base.gguf --train-data friday-training.jsonl --lora-out lora.bin</code>
+              4. Load the LoRA adapter in Ollama or llama.cpp server.
+            </div>
+          </div>
+        </section>
+
+<div class="settings-toast" id="toast" aria-live="polite"></div>
+      </main>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

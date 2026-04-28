@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Friday Assistant</title>
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="../../node_modules/katex/dist/katex.min.css">
+  <script src="../../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="../../node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
+  <script src="../../node_modules/katex/dist/katex.min.js"></script>
+</head>
+<body data-mode="chat">
+  <div id="app">
+    <!-- Title Bar -->
+    <div class="title-bar">
+      <div class="title">
+        <span class="friday-icon">F</span>
+        <span class="app-name">Friday</span>
+        <span class="title-sep" id="titleSep">›</span>
+        <span class="session-label" id="sessionTitleLabel"></span>
+      </div>
+      <div class="title-actions">
+        <button class="sugg-toggle-btn" id="suggToggleBtn" title="Suggestions panel" aria-label="Suggestions">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><circle cx="18" cy="6" r="3" fill="currentColor" stroke="none" opacity="0.6"/></svg>
+        </button>
+        <button class="incog-toggle-btn" id="incogToggleBtn" title="Incognito mode (local only)" aria-label="Incognito mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a7 7 0 0 0-7 7v10.5l2.2-1.6 2.2 1.6 2.3-1.6 2.3 1.6 2.2-1.6 2.2 1.6V10a7 7 0 0 0-7-7z"/>
+            <circle cx="9.4" cy="11" r="1.1" fill="currentColor" stroke="none"/>
+            <circle cx="14.6" cy="11" r="1.1" fill="currentColor" stroke="none"/>
+            <path d="M10.2 14.8c.6.5 1.2.7 1.8.7s1.2-.2 1.8-.7"/>
+          </svg>
+        </button>
+        <button class="settings-btn" id="settingsBtn" title="Settings">⚙</button>
+        <button class="reload-btn" id="reloadBtn" title="Reload window">↺</button>
+        <div class="window-controls">
+          <button class="window-btn minimize-btn" id="minimizeBtn">−</button>
+          <button class="window-btn close-btn" id="closeBtn">×</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+      <!-- Chat Area -->
+      <div class="chat-area">
+        <div class="chat-messages" id="chatMessages">
+          <div class="welcome-message" id="welcomeMessage">
+            <h2>Hi! I'm Friday</h2>
+            <p id="welcomeSubtext">Your personal AI assistant. Ask me anything!</p>
+          </div>
+        </div>
+
+        <!-- Token warning bar (hidden until context > 90%) -->
+        <div class="token-warning-bar hidden" id="tokenWarningBar">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span id="tokenWarningText">Context nearly full — compacting soon</span>
+        </div>
+
+        <!-- Permission banner (emitted by AgentRuntime permission.request events) -->
+        <div id="permissionBannerContainer"></div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+          <div id="imagePreviewStrip" class="image-preview-strip"></div>
+          <div id="visionWarning" class="vision-warning" style="display:none">
+            ⚠ Selected model may not support images. Switch to a vision model (marked 👁).
+          </div>
+          <textarea
+            id="userInput"
+            placeholder="Ask me anything... (Ctrl+I to focus, Ctrl+Shift+Space to toggle)"
+            rows="2"
+          ></textarea>
+          <div class="input-footer">
+            <div class="input-footer-left">
+              <button id="attachBtn" class="input-tool-btn attach-btn" title="Attach image (or paste / drag-drop)">📎</button>
+              <button id="micBtn" class="input-tool-btn mic-btn" title="Voice input (click to speak)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10a7 7 0 0 0 14 0M12 19v3M9 22h6"/>
+                </svg>
+              </button>
+              <button id="searchToggleBtn" class="input-tool-btn search-toggle-btn" title="Force web search">🔍</button>
+            </div>
+
+
+            <div class="input-footer-right">
+              <!-- Model picker pill -->
+              <div class="model-pill-wrapper">
+                <button class="model-pill" id="modelPillBtn" title="Switch model">
+                  <span class="model-pill-dot" id="modelPillDot"></span>
+                  <span class="model-pill-name" id="modelPillName">Loading…</span>
+                  <svg class="model-pill-caret" width="9" height="9" viewBox="0 0 10 6" fill="none">
+                    <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <!-- Picker popover (opens upward) -->
+                <div class="model-picker hidden" id="modelPicker">
+                  <div class="model-picker-tabs" id="modelPickerTabs">
+                    <button class="mp-tab active" data-type="ollama">Ollama</button>
+                    <button class="mp-tab" data-type="groq">Groq</button>
+                    <button class="mp-tab" data-type="gemini">Gemini</button>
+                    <button class="mp-tab" data-type="openrouter">OpenRouter</button>
+                  </div>
+                  <div class="model-picker-list" id="modelPickerList"></div>
+                </div>
+              </div>
+
+              <button id="stopBtn" class="stop-btn" title="Stop generating">
+                <svg width="9" height="9" viewBox="0 0 9 9" fill="currentColor"><rect width="9" height="9" rx="2"/></svg>
+                Stop
+              </button>
+              <button id="sendBtn" class="send-btn" title="Send message">
+                Send
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                  <path d="M15 1L7 9M15 1L10 15L7 9M15 1L1 6L7 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      <input type="file" id="imageInput"
+          accept="image/*,application/pdf,text/*,.pdf,.txt,.md,.csv,.py,.js,.ts,.json,.yaml,.yml,.sh,.bat,.docx"
+          multiple style="display:none">
+      </div>
+
+      <!-- Artifacts panel (Cowork mode) -->
+      <div class="artifacts-panel hidden" id="artifactsPanel">
+        <div class="artifacts-panel-header">
+          <div class="artifacts-tabs" id="artifactsTabs"></div>
+          <div class="artifacts-panel-actions">
+            <button class="artifact-action-btn" id="artifactCopyBtn" title="Copy">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button class="artifact-action-btn" id="artifactPreviewBtn" title="Toggle preview" style="display:none">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="artifact-action-btn" id="artifactCloseBtn" title="Close panel">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="artifacts-panel-body" id="artifactsPanelBody">
+          <!-- Content injected by JS -->
+        </div>
+      </div>
+
+      <!-- Suggestions Panel -->
+      <div class="sugg-panel hidden" id="suggPanel">
+        <div class="sugg-panel-header">
+          <span class="sugg-panel-title">Context</span>
+          <button id="suggCloseBtn" class="sugg-close-btn" title="Close">✕</button>
+        </div>
+        <div class="sugg-panel-body" id="suggPanelBody">
+          <div class="sugg-empty">Send a message to see relevant context.</div>
+        </div>
+      </div>
+
+      <!-- Sidebar — session history -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">History</span>
+          <button id="sidebarToggleBtn" class="sidebar-toggle-btn" title="Toggle sidebar (Ctrl+Y)">›</button>
+        </div>
+
+        <!-- Chat Sessions -->
+        <div class="sidebar-section" id="chatSidebarSection">
+          <div class="chats-section-header">
+            <span id="chatsLabel">Chat history</span>
+            <div class="chats-header-actions">
+              <button id="searchChatsBtn" class="chats-search-icon-btn" title="Search chats (Ctrl+Shift+F)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              </button>
+              <button id="newChatBtn" class="new-chat-btn" title="New chat">+</button>
+            </div>
+          </div>
+          <div id="chatsSearchBar" class="chats-search-bar hidden">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="chats-search-bar-icon"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input id="chatsSearchInput" class="chats-search-input" placeholder="Search sessions…" autocomplete="off" spellcheck="false">
+            <button id="chatsSearchClose" class="chats-search-close" title="Clear search">×</button>
+          </div>
+          <div class="chats-list" id="chatsList">
+            <!-- Filled dynamically by renderer.js -->
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <button id="clearChatBtn" class="clear-btn">+ New Chat</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Overlay -->
+  <div id="settingsOverlay" class="settings-overlay hidden">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button id="closeSettingsBtn" class="settings-close-btn">×</button>
+      </div>
+      <div class="settings-content">
+        <section class="settings-section">
+          <h3>App Shortcuts</h3>
+          <p class="settings-hint">Map friendly names to apps you want Friday to launch (e.g. Code, Steam, Edge, Brave).</p>
+          <table class="settings-table" id="appShortcutsTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Path</th>
+                <th>Args (optional)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Filled dynamically -->
+            </tbody>
+          </table>
+          <button id="addAppShortcutBtn" class="settings-add-btn">Add App Shortcut</button>
+        </section>
+
+        <section class="settings-section">
+          <h3>Web Bookmarks</h3>
+          <p class="settings-hint">Frequently used sites Friday can open by name (e.g. YT, Insta, Calendar).</p>
+          <table class="settings-table" id="webBookmarksTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Filled dynamically -->
+            </tbody>
+          </table>
+          <button id="addBookmarkBtn" class="settings-add-btn">Add Bookmark</button>
+        </section>
+
+        <section class="settings-section">
+          <h3>Aliases (optional)</h3>
+          <p class="settings-hint">Map short names (e.g. YT) to a URL or bookmark name.</p>
+          <table class="settings-table" id="aliasesTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Target (URL or bookmark name)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Filled dynamically -->
+            </tbody>
+          </table>
+          <button id="addAliasBtn" class="settings-add-btn">Add Alias</button>
+        </section>
+
+        <div class="settings-footer">
+          <button id="saveSettingsBtn" class="settings-save-btn">Save</button>
+          <button id="cancelSettingsBtn" class="settings-cancel-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ctrl+K Session Switcher -->
+  <div id="sessionSwitcherModal" class="ssm hidden" role="dialog" aria-label="Switch session">
+    <div class="ssm-backdrop"></div>
+    <div class="ssm-dialog">
+      <div class="ssm-header">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input id="ssmSearch" class="ssm-search" placeholder="Search sessions…" autocomplete="off" spellcheck="false">
+        <kbd class="ssm-esc-hint">ESC</kbd>
+      </div>
+      <div id="ssmList" class="ssm-list"></div>
+      <div class="ssm-footer">
+        <span><kbd>↑↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>ESC</kbd> close</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="rag/bm25.js"></script>
+  <script src="rag/ragEmbedder.js"></script>
+  <script src="rag/docIndex.js"></script>
+  <script src="components/ModelSelector.js"></script>
+  <script src="components/ChatInterface.js"></script>
+  <script src="wakeWord.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
