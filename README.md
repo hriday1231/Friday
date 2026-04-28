@@ -2,7 +2,7 @@
 
 A personal desktop AI assistant for Windows, built with Electron and Node.js.
 
-Friday gives you an always-available chat window — global hotkey plus a "Hey Friday" wake word — backed by an event-driven agent that can search the web, open URLs and apps, manage your Google Calendar, and remember what you've talked about across sessions. Four LLM providers (Groq, Gemini, OpenRouter, Ollama) sit behind a single interface so you can swap models without changing the rest of the stack.
+Friday gives you an always-available chat window - global hotkey plus a "Hey Friday" wake word - backed by an event-driven agent that can search the web, open URLs and apps, manage your Google Calendar, and remember what you've talked about across sessions. Four LLM providers (Groq, Gemini, OpenRouter, Ollama) sit behind a single interface so you can swap models without changing the rest of the stack.
 
 ## Features
 
@@ -16,7 +16,7 @@ Friday gives you an always-available chat window — global hotkey plus a "Hey F
 - **Voice input.** Whisper-based STT plus a local wake-word detector running on a 2.5-second rolling audio buffer.
 - **RAG + persistent memory.** BM25 plus embedding retrieval (via Ollama's `nomic-embed-text`) for per-session document indexing, plus a SQLite-backed long-term memory store that surfaces relevant facts into the system prompt at inference time.
 - **Compaction-aware context.** When a conversation approaches the model's context window, an automatic summarization step preserves the gist of older turns while keeping the most recent messages verbatim.
-- **Behavioral eval harness.** `scripts/eval.js` runs an LLM-as-judge suite against the agent — rubric scoring, tool-use assertions, multi-turn cases, and credential-aware skips for offline runs.
+- **Behavioral eval harness.** `scripts/eval.js` runs an LLM-as-judge suite against the agent - rubric scoring, tool-use assertions, multi-turn cases, and credential-aware skips for offline runs.
 
 ## Quick start
 
@@ -28,7 +28,7 @@ cp .env.example .env   # fill in whichever provider keys you want to use
 npm start
 ```
 
-Optional Windows extra — register a Start Menu shortcut that launches the app silently:
+Optional Windows extra - register a Start Menu shortcut that launches the app silently:
 
 ```bash
 npm run install-shortcut
@@ -76,7 +76,7 @@ scripts/
   install-start-menu-shortcut.ps1
 ```
 
-The agent emits a typed event stream — `part.new`, `part.delta`, `tool.stream`, `permission.request`, `memory.proposal`, `session.title` — so the UI can render reasoning, tool calls, and streaming text incrementally with the same shape regardless of which provider produced the response.
+The agent emits a typed event stream - `part.new`, `part.delta`, `tool.stream`, `permission.request`, `memory.proposal`, `session.title` - so the UI can render reasoning, tool calls, and streaming text incrementally with the same shape regardless of which provider produced the response.
 
 For deeper architectural notes, IPC patterns, and conventions for adding tools or providers, see [`AGENTS.md`](AGENTS.md).
 
@@ -86,7 +86,7 @@ Electron 28, Node.js, vanilla-JS renderer, sql.js (pure-JS SQLite, no native dep
 
 ## Status
 
-Hand-built personal project. Windows is the primary target; macOS and Linux paths may need adjustment. There is no automated unit-test suite — `npm run eval` is the closest thing.
+Hand-built personal project. Windows is the primary target; macOS and Linux paths may need adjustment. There is no automated unit-test suite - `npm run eval` is the closest thing.
 
 ## License
 
