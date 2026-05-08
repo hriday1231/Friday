@@ -26,15 +26,22 @@ document.getElementById('settingsBtn')?.addEventListener('click', async () => {
   }
 });
 
+// ── IPC subscription bookkeeping ─────────────────────────────────────────────
+// Every preload onX(callback) returns an unsubscribe fn. Capture them so a
+// reload (Ctrl+R / location.reload()) doesn't accumulate handlers in the
+// long-lived ipcRenderer instance.
+const _ipcUnsubs = [];
+function _registerIpc(unsub) { if (typeof unsub === 'function') _ipcUnsubs.push(unsub); }
+
 // ── Ollama model updates ──────────────────────────────────────────────────────
-window.electronAPI?.onOllamaModelsUpdated?.((models) => {
+_registerIpc(window.electronAPI?.onOllamaModelsUpdated?.((models) => {
   if (window.modelSelector) {
     window.modelSelector.ollamaModels = models;
     if (window.modelSelector.currentModelType === 'ollama') {
       window.modelSelector.updateModelDropdown();
     }
   }
-});
+}));
 
 // ── Focus on input when window is shown ──────────────────────────────────────
 window.addEventListener('focus', () => {
@@ -42,10 +49,10 @@ window.addEventListener('focus', () => {
 });
 
 // ── Memory approval panel ─────────────────────────────────────────────────────
-window.electronAPI?.onMemoryProposal?.((facts) => {
+_registerIpc(window.electronAPI?.onMemoryProposal?.((facts) => {
   if (!facts || facts.length === 0) return;
   showMemoryApproval(facts);
-});
+}));
 
 
 function showMemoryApproval(facts) {
@@ -81,7 +88,7 @@ function showMemoryApproval(facts) {
 
     const text = document.createElement('span');
     text.className = 'memory-approval-fact';
-    text.textContent = fact;
+    text.textContent = (fact && typeof fact === 'object') ? (fact.content || '') : String(fact ?? '');
 
     const keep = document.createElement('button');
     keep.className = 'mar-btn mar-keep active';
@@ -454,8 +461,13 @@ async function renderSearchResults(query) {
 }
 
 function _hlMatch(text, query) {
-  const esc = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return text.replace(new RegExp(`(${esc})`, 'gi'), '<mark class="hl">$1</mark>');
+  // HTML-escape FIRST so `text` (a user/assistant message excerpt) can't
+  // smuggle <script> or <img onerror=…> into the search results panel.
+  // Only the <mark> tags we add here are allowed through.
+  const safe = _esc(text);
+  const esc  = String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!esc) return safe;
+  return safe.replace(new RegExp(`(${esc})`, 'gi'), '<mark class="hl">$1</mark>');
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
@@ -645,7 +657,9 @@ function renderSuggestions({ memories = [], episodes = [] } = {}) {
     html += '<div class="sugg-section"><div class="sugg-section-title">What I know</div>';
     for (const m of memories) {
       const cat = CAT_LABEL[m.category] || m.category || '';
-      html += `<div class="sugg-item"><span class="sugg-item-cat">${cat}</span>${_esc(m.content)}</div>`;
+      // Both cat and content are escaped — m.category falls back to the raw
+      // category string from the DB, which originates with LLM extraction.
+      html += `<div class="sugg-item"><span class="sugg-item-cat">${_esc(cat)}</span>${_esc(m.content)}</div>`;
     }
     html += '</div>';
   }
@@ -783,6 +797,9 @@ async function _initWakeWord() {
   });
 
   await _wakeDetector.start();
+  // Expose for ChatInterface so it can pause/resume during whisper recording
+  // and TTS speaking (avoids self-trigger on the model's own audio reply).
+  window._wakeDetector = _wakeDetector;
   console.log('[WakeWord] Detector started, phrase:', cfg.phrase);
 }
 
@@ -803,35 +820,53 @@ window.electronAPI?.saveWakeWordConfig && (() => {
 
 console.log('Friday Assistant initialized');
 
-// ── AgentRuntime event listener (Phase 1C) ────────────────────────────────────
+// ── AgentRuntime event listener ──────────────────────────────────────────────
 //
 // All AgentRuntime events arrive on 'agent-event' with typed payloads.
 // We route them to ChatInterface helper methods.
+//
+// Per-text-part accumulators replace the old global _agentFinalText so a
+// multi-part response (text → tool → text) doesn't lose earlier segments
+// when a later part.new resets the accumulator.
 
-let _agentFinalText  = '';
-let _agentUsage      = null;
-let _agentModelType  = '';
+const _agentTextById = new Map(); // partId → accumulated text
+let   _agentUsage    = null;
+let   _agentModelType = '';
 
-window.electronAPI?.onAgentEvent?.((event) => {
+function _agentTotalText() {
+  return Array.from(_agentTextById.values()).join('');
+}
+
+_registerIpc(window.electronAPI?.onAgentEvent?.((event) => {
   const ci = window.chatInterface;
   if (!ci) return;
+
+  // Drop events whose sessionId doesn't match the currently-viewed session,
+  // EXCEPT for incognito sessions (which intentionally have no persisted id).
+  // session.title and context.warning are still applied even when filtered.
+  if (event.sessionId && _viewedSessionId && event.sessionId !== _viewedSessionId
+      && event.sessionId !== '__incognito__'
+      && event.type !== 'session.title') {
+    return;
+  }
 
   switch (event.type) {
     case 'session.status': {
       if (event.status === 'running') {
         // Ensure we're set as generating
         ci._setGenerating?.(true);
-        _agentFinalText = '';
-        _agentUsage     = null;
+        _agentTextById.clear();
+        _agentUsage = null;
         // startAgentResponse is called lazily on first part.new
       } else if (event.status === 'idle') {
-        ci.finalizeAgentResponse(_agentFinalText, _agentUsage, _agentModelType);
+        const finalText = _agentTotalText();
+        ci.finalizeAgentResponse(finalText, _agentUsage, _agentModelType);
         ci._setGenerating?.(false);
         ci.userInput?.focus();
         // Refresh session list to pick up any title that was set
         refreshSessionList(_viewedSessionId);
-        if (_agentFinalText && typeof window._onSuggestionQuery === 'function') {
-          window._onSuggestionQuery(_agentFinalText);
+        if (finalText && typeof window._onSuggestionQuery === 'function') {
+          window._onSuggestionQuery(finalText);
         }
       } else if (event.status === 'error') {
         // Clean up orphaned thinking indicator on error
@@ -847,9 +882,10 @@ window.electronAPI?.onAgentEvent?.((event) => {
     case 'part.new': {
       const part = event.part;
       if (!part) break;
-      // Always reset text accumulator on new text part (even if empty — deltas will fill it)
+      // Track text-part accumulators per part id so a later text part doesn't
+      // overwrite an earlier one (multi-part replies: text → tool → text).
       if (part.type === 'text') {
-        _agentFinalText = part.content || '';
+        _agentTextById.set(part.id, part.content || '');
       }
       ci.handlePartNew(part);
       break;
@@ -858,7 +894,10 @@ window.electronAPI?.onAgentEvent?.((event) => {
     case 'part.delta': {
       // AgentRuntime emits { partId, text } (field is 'text', not 'delta')
       ci.handlePartDelta(event.partId, event.text || '');
-      _agentFinalText += (event.text || '');
+      if (event.partId) {
+        const prev = _agentTextById.get(event.partId) || '';
+        _agentTextById.set(event.partId, prev + (event.text || ''));
+      }
       break;
     }
 
@@ -867,9 +906,9 @@ window.electronAPI?.onAgentEvent?.((event) => {
       const updatedPart = event.part;
       if (!updatedPart) break;
       ci.handlePartUpdate(updatedPart.id, updatedPart);
-      // Capture final text content
-      if (updatedPart.type === 'text' && updatedPart.content) {
-        _agentFinalText = updatedPart.content;
+      // Capture finalised text content (may differ from streamed deltas)
+      if (updatedPart.type === 'text' && typeof updatedPart.content === 'string') {
+        _agentTextById.set(updatedPart.id, updatedPart.content);
       }
       // Capture usage from step-finish
       if (updatedPart.usage) _agentUsage = updatedPart.usage;
@@ -920,6 +959,20 @@ window.electronAPI?.onAgentEvent?.((event) => {
     default:
       break;
   }
+}));
+
+_registerIpc(window.electronAPI?.onSessionTitleSet?.((event, payload) => {
+  // Some preload variants emit (event, payload), others (payload). Cover both.
+  const data = (payload === undefined) ? event : payload;
+  if (data?.title && data.sessionId === _viewedSessionId) updateTitleBar(data.title);
+}));
+
+// Tear down all subscriptions on unload so a renderer reload doesn't leak
+// callbacks into the persistent preload context.
+window.addEventListener('beforeunload', () => {
+  for (const fn of _ipcUnsubs) { try { fn(); } catch {} }
+  _ipcUnsubs.length = 0;
+  try { _wakeDetector?.stop?.(); } catch {}
 });
 
 // Hide token warning bar when a new message starts

@@ -45,6 +45,9 @@ class GeminiProvider extends BaseProvider {
   }
 
   appendToolResults(messages, results) {
+    // Gemini's API keys tool replies by name only — no callId is required on the wire.
+    // Multi-tool turns must therefore preserve order; AgentRuntime returns results
+    // in the same order tool calls were issued.
     messages.push({
       role: 'user',
       parts: results.map(r => ({
@@ -63,13 +66,14 @@ class GeminiProvider extends BaseProvider {
   getCheapModel() { return 'gemini-1.5-flash-8b'; }
   // _temperature inherited from BaseProvider
 
-  async chatWithTools(messages, modelName, onChunk, signal, appMode = 'chat') {
+  async chatWithTools(messages, modelName, onChunk, signal, appMode = 'chat', opts = {}) {
     GeminiService.initialize();
 
+    const excludeTools = opts && opts.excludeTools;
     const modelInstance = GeminiService.genAI.getGenerativeModel({
       model: modelName,
       systemInstruction: buildSystemPrompt(this._memoryEntries || [], this._contextSummary || null, this._episodes || [], this._agent || null, this._projectInstructions || null, this._appMode || 'chat', this._fewShots || [], this._screenContext || null),
-      tools: [{ functionDeclarations: this.toolRegistry.getGeminiFunctionDeclarations() }]
+      tools: [{ functionDeclarations: this.toolRegistry.getGeminiFunctionDeclarations(excludeTools) }]
     });
 
     const stream = await modelInstance.generateContentStream(
@@ -77,9 +81,15 @@ class GeminiProvider extends BaseProvider {
       signal ? { signal } : undefined
     );
 
-    // Stream text chunks as they arrive
+    // Stream text chunks as they arrive — and respect aborts mid-stream, since
+    // the SDK doesn't always cancel the underlying request when the signal flips.
     let fullText = '';
     for await (const chunk of stream.stream) {
+      if (signal?.aborted) {
+        const e = new Error('Aborted');
+        e.name = 'AbortError';
+        throw e;
+      }
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part.text) {
@@ -94,7 +104,13 @@ class GeminiProvider extends BaseProvider {
     const rawParts = fullResponse.candidates?.[0]?.content?.parts || [];
     const toolCalls = rawParts
       .filter(p => p.functionCall)
-      .map(p => ({ name: p.functionCall.name, args: p.functionCall.args || {} }));
+      .map((p, i) => ({
+        // Gemini doesn't surface a stable id per call — synthesise one so AgentRuntime
+        // can key approvals/parts uniquely even with multiple calls in one turn.
+        id:   `gemini_${Date.now()}_${i}_${p.functionCall.name}`,
+        name: p.functionCall.name,
+        args: p.functionCall.args || {},
+      }));
 
     const usage = fullResponse.usageMetadata;
     return {

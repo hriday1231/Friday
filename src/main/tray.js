@@ -18,28 +18,20 @@ function setupTray(mainWindow) {
     : nativeImage.createEmpty();
 
   tray = new Tray(icon);
-  
+
+  // Defensive helpers — calling .show()/.hide() on a destroyed BrowserWindow
+  // throws. Always check before touching it.
+  const _alive = () => mainWindow && !mainWindow.isDestroyed();
+  const _show  = () => { if (_alive()) { mainWindow.show(); mainWindow.focus(); } };
+  const _hide  = () => { if (_alive()) mainWindow.hide(); };
+  const _isVis = () => _alive() && mainWindow.isVisible();
+  const _isFoc = () => _alive() && mainWindow.isFocused();
+
   const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show Friday',
-      click: () => {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    },
-    {
-      label: 'Hide Friday',
-      click: () => {
-        mainWindow.hide();
-      }
-    },
+    { label: 'Show Friday', click: _show },
+    { label: 'Hide Friday', click: _hide },
     { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        app.quit();
-      }
-    }
+    { label: 'Quit',        click: () => app.quit() },
   ]);
 
   tray.setToolTip('Friday Assistant');
@@ -48,25 +40,11 @@ function setupTray(mainWindow) {
     // On macOS, setContextMenu() hijacks left-click to show the menu automatically.
     // Instead: left-click toggles the window, right-click pops up the menu.
     tray.on('right-click', () => tray.popUpContextMenu(contextMenu));
-    tray.on('click', () => {
-      if (mainWindow.isVisible() && mainWindow.isFocused()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    });
+    tray.on('click', () => { if (_isVis() && _isFoc()) _hide(); else _show(); });
   } else {
     // Windows / Linux: left-click toggles, right-click shows context menu.
     tray.setContextMenu(contextMenu);
-    tray.on('click', () => {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    });
+    tray.on('click', () => { if (_isVis()) _hide(); else _show(); });
   }
 }
 

@@ -1,10 +1,57 @@
 const Store = require('electron-store');
 
+// Lazily resolved Electron safeStorage. Returned getter returns null if
+// safeStorage isn't ready (renderer-only module loads, pre-app-ready, or
+// older Electron versions). When null, we fall back to plaintext to keep
+// the app functional — but log so the user knows the keys aren't encrypted.
+let _safeStorageWarned = false;
+function _safe() {
+  try {
+    const { safeStorage, app } = require('electron');
+    if (!safeStorage || !app?.isReady?.()) return null;
+    if (!safeStorage.isEncryptionAvailable()) {
+      if (!_safeStorageWarned) {
+        _safeStorageWarned = true;
+        console.warn('[SettingsStore] safeStorage encryption not available on this system; API keys will be stored in plaintext.');
+      }
+      return null;
+    }
+    return safeStorage;
+  } catch { return null; }
+}
+
+const ENC_PREFIX = 'enc:'; // marks a value as base64-encoded ciphertext
+function _encrypt(plaintext) {
+  if (!plaintext) return '';
+  const ss = _safe();
+  if (!ss) return String(plaintext);
+  try {
+    const buf = ss.encryptString(String(plaintext));
+    return ENC_PREFIX + buf.toString('base64');
+  } catch { return String(plaintext); }
+}
+function _decrypt(stored) {
+  if (!stored || typeof stored !== 'string') return '';
+  if (!stored.startsWith(ENC_PREFIX)) return stored; // legacy plaintext value
+  const ss = _safe();
+  if (!ss) return ''; // ciphertext present but no key available — fail closed
+  try {
+    const buf = Buffer.from(stored.slice(ENC_PREFIX.length), 'base64');
+    return ss.decryptString(buf);
+  } catch { return ''; }
+}
+
 /**
  * Central settings store for Friday.
  * Persists:
  * - appShortcuts: [{ name, path, args }]
  * - webBookmarks: [{ name, url }]
+ *
+ * Cloud API keys are encrypted at rest via Electron safeStorage (DPAPI on
+ * Windows, Keychain on macOS, Secret Service / kwallet on Linux). Reads
+ * transparently decrypt; writes transparently encrypt. Legacy plaintext
+ * values are still readable so existing installs upgrade in place — they're
+ * re-encrypted the next time the user saves.
  */
 class SettingsStore {
   constructor() {
@@ -14,6 +61,8 @@ class SettingsStore {
         appShortcuts: [],
         whisperExePath:   '',
         whisperModelPath: '',
+        whisperUseCpu:    false,
+        whisperExtraArgs: '',
         customSystemPrompt: '',
         groqApiKey: '',
         geminiApiKey: '',
@@ -95,16 +144,29 @@ class SettingsStore {
 
   // ----- Whisper (local speech recognition) -----
 
+  // Windows users often paste paths from Explorer's "Copy as path" which wraps
+  // them in quotes. Those quotes become part of the filename string when passed
+  // to execFile, and whisper-cli then reports `failed to initialize whisper
+  // context` because the file at the literal `"C:\..."` path doesn't exist.
+  // Strip on both save AND read so already-corrupted installs heal themselves.
+  _stripQuotes(s) {
+    return String(s || '').trim().replace(/^["']+|["']+$/g, '').trim();
+  }
+
   getWhisperConfig() {
     return {
-      exePath:   this.store.get('whisperExePath',   ''),
-      modelPath: this.store.get('whisperModelPath', ''),
+      exePath:   this._stripQuotes(this.store.get('whisperExePath',   '')),
+      modelPath: this._stripQuotes(this.store.get('whisperModelPath', '')),
+      useCpu:    this.store.get('whisperUseCpu',    false),
+      extraArgs: this.store.get('whisperExtraArgs', ''),
     };
   }
 
-  setWhisperConfig({ exePath = '', modelPath = '' } = {}) {
-    this.store.set('whisperExePath',   exePath.trim());
-    this.store.set('whisperModelPath', modelPath.trim());
+  setWhisperConfig({ exePath = '', modelPath = '', useCpu, extraArgs } = {}) {
+    this.store.set('whisperExePath',   this._stripQuotes(exePath));
+    this.store.set('whisperModelPath', this._stripQuotes(modelPath));
+    if (typeof useCpu === 'boolean') this.store.set('whisperUseCpu', useCpu);
+    if (typeof extraArgs === 'string') this.store.set('whisperExtraArgs', extraArgs.trim());
   }
 
   // ----- Custom system prompt (persona) -----
@@ -117,45 +179,19 @@ class SettingsStore {
     this.store.set('customSystemPrompt', (text || '').trim());
   }
 
-  // ----- Groq API key -----
+  // ----- Cloud API keys (encrypted at rest via safeStorage) -----
 
-  getGroqApiKey() {
-    return this.store.get('groqApiKey', '');
-  }
+  getGroqApiKey()       { return _decrypt(this.store.get('groqApiKey', ''));       }
+  setGroqApiKey(key)    { this.store.set('groqApiKey',       _encrypt((key || '').trim())); }
 
-  setGroqApiKey(key) {
-    this.store.set('groqApiKey', (key || '').trim());
-  }
+  getGeminiApiKey()     { return _decrypt(this.store.get('geminiApiKey', ''));     }
+  setGeminiApiKey(key)  { this.store.set('geminiApiKey',     _encrypt((key || '').trim())); }
 
-  // ----- Gemini API key -----
+  getBraveApiKey()      { return _decrypt(this.store.get('braveApiKey', ''));      }
+  setBraveApiKey(key)   { this.store.set('braveApiKey',      _encrypt((key || '').trim())); }
 
-  getGeminiApiKey() {
-    return this.store.get('geminiApiKey', '');
-  }
-
-  setGeminiApiKey(key) {
-    this.store.set('geminiApiKey', (key || '').trim());
-  }
-
-  // ----- Brave Search API key -----
-
-  getBraveApiKey() {
-    return this.store.get('braveApiKey', '');
-  }
-
-  setBraveApiKey(key) {
-    this.store.set('braveApiKey', (key || '').trim());
-  }
-
-  // ----- OpenRouter API key -----
-
-  getOpenRouterApiKey() {
-    return this.store.get('openRouterApiKey', '');
-  }
-
-  setOpenRouterApiKey(key) {
-    this.store.set('openRouterApiKey', (key || '').trim());
-  }
+  getOpenRouterApiKey() { return _decrypt(this.store.get('openRouterApiKey', '')); }
+  setOpenRouterApiKey(key) { this.store.set('openRouterApiKey', _encrypt((key || '').trim())); }
 
   // ----- Ollama base URL -----
 
@@ -220,6 +256,28 @@ class SettingsStore {
     if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return url;
     if (/^[^\s]+\.[^\s]+$/.test(url)) return `https://${url}`;
     return url;
+  }
+
+  /**
+   * Resolve a tool-supplied URL into a safe http(s) URL string, or throw.
+   * Rejects file://, javascript:, ms-msdt:, vbscript:, anything starting with
+   * "--" (browser flag injection), or anything that fails to parse.
+   * Use this at every boundary where the LLM-controlled URL flows into
+   * shell.openExternal or spawn(browser, [..., url]).
+   */
+  safeHttpUrl(input) {
+    if (typeof input !== 'string') throw new Error('URL must be a string');
+    const candidate = this.normalizeUrl(input);
+    if (!candidate) throw new Error('Empty URL');
+    const trimmed = candidate.trim();
+    if (trimmed.startsWith('-')) throw new Error(`Refusing URL that starts with a dash: ${trimmed}`);
+    let parsed;
+    try { parsed = new URL(trimmed); }
+    catch { throw new Error(`Invalid URL: ${trimmed}`); }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(`Refusing URL with protocol "${parsed.protocol}" — only http(s) is allowed`);
+    }
+    return parsed.toString();
   }
 
   // ----- Screen context -----

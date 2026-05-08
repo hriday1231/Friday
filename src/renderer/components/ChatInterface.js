@@ -632,10 +632,21 @@ class ChatInterface {
 
     const header = document.createElement('div');
     header.className = 'exec-output-header';
-    header.innerHTML =
-      `<span>⚡ Output</span>` +
-      `<span class="${isOk ? 'exec-exit-ok' : 'exec-exit-err'}">exit ${exitCode}</span>` +
-      (duration ? `<span class="exec-duration">${duration}</span>` : '');
+    // Build via DOM nodes — exitCode/duration come from regex over tool
+    // output, which is attacker-controllable through prompt injection.
+    const outLabel = document.createElement('span');
+    outLabel.textContent = '⚡ Output';
+    header.appendChild(outLabel);
+    const exitSpan = document.createElement('span');
+    exitSpan.className = isOk ? 'exec-exit-ok' : 'exec-exit-err';
+    exitSpan.textContent = `exit ${exitCode}`;
+    header.appendChild(exitSpan);
+    if (duration) {
+      const durSpan = document.createElement('span');
+      durSpan.className = 'exec-duration';
+      durSpan.textContent = duration;
+      header.appendChild(durSpan);
+    }
     panel.appendChild(header);
 
     const body = document.createElement('div');
@@ -712,7 +723,30 @@ class ChatInterface {
         catch { return blocks[i].latex; }
       });
     }
+    // Sanitize the rendered markup before it flows into innerHTML. marked
+    // returns embedded HTML verbatim and `[label](javascript:…)` is allowed
+    // by default — DOMPurify strips both. KaTeX needs SVG and MathML, so we
+    // explicitly enable those profiles and keep math attributes.
+    if (typeof DOMPurify !== 'undefined') {
+      html = DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true, svg: true, mathMl: true },
+        ADD_ATTR:     ['target', 'rel'],
+        FORBID_TAGS:  ['style', 'iframe', 'object', 'embed', 'form', 'input', 'meta', 'base'],
+        FORBID_ATTR:  ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'srcdoc'],
+      });
+    }
     return html;
+  }
+
+  /** HTML-escape helper — used wherever we need to splice user/LLM text into
+   * an HTML template without losing the surrounding markup structure. */
+  _escapeHtml(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   _setGenerating(on) {
@@ -757,11 +791,16 @@ class ChatInterface {
       return;
     }
 
+    // Pause the wake-word detector so the two recorders don't fight over the
+    // mic on machines that don't grant concurrent streams.
+    try { window._wakeDetector?.pause?.(); } catch {}
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     } catch {
       this._showVoiceError('Microphone permission denied.');
+      try { window._wakeDetector?.resume?.(); } catch {}
       return;
     }
 
@@ -962,6 +1001,8 @@ class ChatInterface {
     this._isListening = false;
     this.micBtn?.classList.remove('recording', 'transcribing');
     this.micBtn?.setAttribute('title', 'Voice input (click to speak)');
+    // Whisper / Web-Speech released the mic — let wake word resume listening.
+    try { window._wakeDetector?.resume?.(); } catch {}
   }
 
   _showVoiceError(msg) {
@@ -1049,8 +1090,21 @@ class ChatInterface {
     this._liveMsgEl = null;
   }
 
+  /** Cancel any in-flight agent turn for the current session. */
+  _cancelInFlight() {
+    const sid = this._currentSessionId;
+    if (!sid) return;
+    try { window.electronAPI?.cancelAgentMessage?.(sid); } catch {}
+    this._toolStreamBuffer = [];
+    if (this._activeThinkingId) { try { this.removeThinkingIndicator(this._activeThinkingId); } catch {} }
+    this._setGenerating?.(false);
+    if (this._partEls && typeof this._partEls.clear === 'function') this._partEls.clear();
+    this._liveMsgEl = null;
+  }
+
   /** Start a brand-new session — keeps history accessible, clears the view. */
   async newChat() {
+    this._cancelInFlight();
     this._clearAttachments();
     this._sessionDocs = [];
     this._removedDocs = [];
@@ -1068,6 +1122,7 @@ class ChatInterface {
 
   /** Switch to an existing session (called from a future history panel). */
   async loadSession(sessionId) {
+    this._cancelInFlight();
     this._sessionDocs = [];
     this._removedDocs = [];
     this._currentSessionId = sessionId;
@@ -1129,6 +1184,11 @@ class ChatInterface {
   }
 
   async sendMessage() {
+    // Single-flight guard — double-press / wake-word-during-stream would
+    // otherwise overlap two turns and the first turn's idle event would
+    // remove the second's thinking indicator.
+    if (this.sendBtn?.disabled) return;
+
     const rawMessage = this.userInput.value.trim();
     if (!rawMessage && this._attachedImages.length === 0 && this._attachedDocs.length === 0) return;
     this._stopSpeech(); // stop any ongoing TTS when user sends a new message
@@ -2280,6 +2340,10 @@ class ChatInterface {
   /**
    * Show the AgentRuntime permission request banner.
    * Called by renderer.js on permission.request events.
+   *
+   * Build via createElement + textContent (never innerHTML interpolation) —
+   * tool names and arg values are LLM-controlled and could otherwise smuggle
+   * <script>/<img onerror=…> into the page.
    */
   showAgentPermissionBanner(data) {
     const container = document.getElementById('permissionBannerContainer');
@@ -2290,37 +2354,68 @@ class ChatInterface {
       ? Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n').slice(0, 300)
       : '';
 
+    // Dedupe — a re-emitted permission.request shouldn't stack banners.
+    if (container.querySelector(`.permission-banner[data-req-id="${CSS.escape(String(requestId))}"]`)) {
+      return;
+    }
+
     const banner = document.createElement('div');
     banner.className = 'permission-banner';
     banner.dataset.reqId = requestId;
-    banner.innerHTML = `
-      <div class="permission-banner-icon">🔧</div>
-      <div class="permission-banner-body">
-        <div class="permission-banner-title">Allow <strong>${toolName}</strong>?</div>
-        ${argsText ? `<pre class="permission-banner-detail">${argsText}</pre>` : ''}
-        <div class="permission-banner-actions">
-          <button class="perm-btn perm-btn-deny">Deny</button>
-          <button class="perm-btn perm-btn-allow">Allow once</button>
-          <button class="perm-btn perm-btn-always">Always allow this session</button>
-        </div>
-      </div>`;
+    banner.setAttribute('role', 'alertdialog');
+    banner.setAttribute('aria-live', 'assertive');
+
+    const icon = document.createElement('div');
+    icon.className = 'permission-banner-icon';
+    icon.textContent = '🔧';
+
+    const body = document.createElement('div');
+    body.className = 'permission-banner-body';
+
+    const title = document.createElement('div');
+    title.className = 'permission-banner-title';
+    title.append('Allow ');
+    const strong = document.createElement('strong');
+    strong.textContent = String(toolName || '(unknown tool)');
+    title.append(strong, '?');
+    body.append(title);
+
+    if (argsText) {
+      const pre = document.createElement('pre');
+      pre.className = 'permission-banner-detail';
+      pre.textContent = argsText;
+      body.append(pre);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'permission-banner-actions';
+
+    const denyBtn   = document.createElement('button'); denyBtn.className   = 'perm-btn perm-btn-deny';   denyBtn.textContent   = 'Deny';
+    const allowBtn  = document.createElement('button'); allowBtn.className  = 'perm-btn perm-btn-allow';  allowBtn.textContent  = 'Allow once';
+    const alwaysBtn = document.createElement('button'); alwaysBtn.className = 'perm-btn perm-btn-always'; alwaysBtn.textContent = 'Always allow this session';
+    actions.append(denyBtn, allowBtn, alwaysBtn);
+    body.append(actions);
+
+    banner.append(icon, body);
 
     const respond = (approved, alwaysAllow = false) => {
       window.electronAPI?.respondAgentPermission?.(requestId, approved, alwaysAllow);
       banner.remove();
     };
 
-    banner.querySelector('.perm-btn-deny').addEventListener('click',   () => respond(false));
-    banner.querySelector('.perm-btn-allow').addEventListener('click',  () => respond(true, false));
-    banner.querySelector('.perm-btn-always').addEventListener('click', () => respond(true, true));
+    denyBtn.addEventListener('click',   () => respond(false));
+    allowBtn.addEventListener('click',  () => respond(true, false));
+    alwaysBtn.addEventListener('click', () => respond(true, true));
 
     container.appendChild(banner);
     banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Auto-focus the safest action so the banner is keyboard-accessible.
+    setTimeout(() => denyBtn.focus(), 0);
   }
 
   /** Remove a permission banner by requestId (e.g. if resolved programmatically). */
   dismissAgentPermissionBanner(requestId) {
-    document.querySelector(`.permission-banner[data-req-id="${requestId}"]`)?.remove();
+    document.querySelector(`.permission-banner[data-req-id="${CSS.escape(String(requestId))}"]`)?.remove();
   }
 
   /**

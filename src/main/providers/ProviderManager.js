@@ -1,38 +1,17 @@
 /**
- * ProviderManager — wraps all LLM providers with per-mode configuration.
+ * ProviderManager — routes a model name to the right LLM provider.
  *
- * Responsibilities:
- *   1. Route calls to the correct provider instance based on model name prefix
- *   2. Apply per-mode config: temperature, max_tokens, num_predict
- *   3. Provide a single `chat()` entry point that any part of the app can call
- *      (AgentRuntime, SubAgent, summarizeFn in CompactionManager, etc.)
- *   4. Resolve fallback models when the primary model is unavailable
- *
- * Per-mode defaults:
- *   code mode → temperature=0.1, maxTokens=16384
- *   chat mode → temperature=0.7, maxTokens=4096
+ * Per-mode tuning (temperature, max tokens) lives on each provider via
+ * BaseProvider helpers; this class is just a router with a model-list cache.
  *
  * Provider routing:
- *   'claude-*'        → AnthropicProvider (future)
- *   'gemini-*'        → GeminiProvider
- *   'gpt-*' or 'o*'   → (future OpenAI)
+ *   'gemini-*'         → GeminiProvider
  *   model in Groq list → GroqProvider
  *   model in OR list   → OpenRouterProvider
  *   default / local    → OllamaProvider
  */
 
 'use strict';
-
-// ─── Mode config ─────────────────────────────────────────────────────────────
-
-const MODE_CONFIG = {
-  code: { temperature: 0.1, maxTokens: 16384, numPredict: 8192 },
-  chat: { temperature: 0.7, maxTokens:  4096, numPredict: 4096 },
-};
-
-function configForMode(appMode) {
-  return MODE_CONFIG[appMode] ?? MODE_CONFIG.chat;
-}
 
 // ─── ProviderManager class ────────────────────────────────────────────────────
 
@@ -70,23 +49,6 @@ class ProviderManager {
         this._orModels = new Set(models);
       }
     } catch { /* openrouter unavailable */ }
-  }
-
-  /**
-   * Main entry point: call the LLM with tools.
-   *
-   * @param {Array}    messages   — provider-formatted message array
-   * @param {string}   modelName
-   * @param {Function} onChunk    — streaming callback (text chunk | tool delta)
-   * @param {object}   signal     — AbortSignal
-   * @param {string}   appMode    — 'chat' | 'code'
-   * @returns {Promise<{ text, toolCalls, _rawToolCalls, usage }>}
-   */
-  async chat(messages, modelName, onChunk, signal, appMode = 'chat') {
-    const provider = this._route(modelName);
-    const cfg      = configForMode(appMode);
-
-    return provider.chatWithTools(messages, modelName, onChunk, signal, cfg);
   }
 
   /**
@@ -159,4 +121,4 @@ class ProviderManager {
   }
 }
 
-module.exports = { ProviderManager, configForMode, MODE_CONFIG };
+module.exports = { ProviderManager };

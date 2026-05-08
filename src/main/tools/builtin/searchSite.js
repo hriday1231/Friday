@@ -107,7 +107,9 @@ async function handler(args) {
     throw new Error(`Unsupported site "${site}". Supported: ${supported}`);
   }
 
-  const url = build(query);
+  const rawUrl = build(query);
+  // build() always emits https://, but pass through the safety check anyway.
+  const url = SettingsStore.safeHttpUrl(rawUrl);
   const browserType = normalizeBrowser(browser);
   return launchInBrowser(url, browserType, incognito);
 }

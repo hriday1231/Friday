@@ -60,6 +60,31 @@ function _iconPath() {
   return path.join(base, 'icons', '256x256.png');
 }
 
+// Defensive Electron window settings: deny window.open / will-navigate to
+// external URLs (route them through the OS handler instead), and lock down
+// webPreferences so a renderer XSS bug can't escalate.
+function _hardenWebContents(wc) {
+  wc.setWindowOpenHandler(({ url }) => {
+    try {
+      const u = new URL(url);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        shell.openExternal(url);
+      }
+    } catch {}
+    return { action: 'deny' };
+  });
+  wc.on('will-navigate', (event, url) => {
+    // Allow navigation only within our own loaded file:// pages.
+    if (!url.startsWith('file://')) {
+      event.preventDefault();
+      try {
+        const u = new URL(url);
+        if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(url);
+      } catch {}
+    }
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 900, height: 900, minWidth: 520, minHeight: 400,
@@ -70,10 +95,15 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
       preload: path.join(__dirname, '../preload.js'),
     },
   });
 
+  _hardenWebContents(mainWindow.webContents);
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.hide();
@@ -88,14 +118,26 @@ function createSettingsWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
       preload: path.join(__dirname, '../preload.js'),
     },
   });
+  _hardenWebContents(settingsWindow.webContents);
   settingsWindow.loadFile(path.join(__dirname, '../renderer/settings.html'));
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
 function toggleWindow() {
+  // Defensive: window may have been destroyed (rare but possible if a future
+  // change ever drops `event.preventDefault()` from window-all-closed).
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
+    return;
+  }
   if (mainWindow.isVisible()) mainWindow.hide();
   else { mainWindow.show(); mainWindow.focus(); }
 }
@@ -173,6 +215,7 @@ app.whenReady().then(async () => {
     providerManager,
     store,
     emit: _emit,
+    getScreenContext: () => _screenContext,
   });
 
   // ── Screen context ──────────────────────────────────────────────────────────
@@ -200,9 +243,17 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', (event) => event.preventDefault());
 
+// Flush early on before-quit so the latest writes survive even if a later
+// hook in will-quit throws.
+app.on('before-quit', () => {
+  try { store?._flushNow?.(); } catch (err) { console.error('[main] before-quit flush failed:', err.message); }
+});
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   _stopScreenContext();
+  // Best-effort MCP shutdown so stdio child processes don't linger.
+  try { mcpClientManager?.disconnectAll?.().catch(() => {}); } catch {}
   store?.close();
 });
 
@@ -245,6 +296,11 @@ ipcMain.handle('pin-session', (event, { sessionId, pinned } = {}) => {
 
 ipcMain.handle('extract-file-text', async (event, buffer) => {
   try {
+    // Cap the buffer to prevent an out-of-memory DoS from a misbehaving
+    // renderer. 20MB is comfortably above any reasonable plain-text file.
+    const MAX_BYTES = 20 * 1024 * 1024;
+    const byteLen = buffer?.byteLength ?? buffer?.length ?? 0;
+    if (byteLen > MAX_BYTES) return { success: false, error: 'file-too-large' };
     return { success: true, text: Buffer.from(buffer).toString('utf8') };
   } catch (err) {
     return { success: false, error: err.message };
@@ -306,11 +362,24 @@ ipcMain.handle('get-memory', () => store?.getMemory() ?? []);
 
 ipcMain.handle('approve-memories', (event, facts) => {
   if (!store || !Array.isArray(facts)) return { success: false };
+  const VALID = new Set(['fact', 'preference', 'project', 'entity', 'procedural']);
+  // Strip control chars + cap length so an LLM-extracted fact can't smuggle
+  // delimiter sequences or megabyte-long payloads into the system prompt.
+  const sanitize = (s) => String(s || '')
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 400);
   for (const fact of facts) {
-    if (typeof fact === 'string' && fact.trim()) {
-      store.addMemory(fact.trim(), 'auto', 'fact', 'chat');
+    if (typeof fact === 'string') {
+      const safe = sanitize(fact);
+      if (safe.length >= 4) store.addMemory(safe, 'auto', 'fact', 'chat');
     } else if (fact && typeof fact === 'object' && fact.content) {
-      store.addMemory(fact.content.trim(), 'auto', fact.category || 'fact', 'chat');
+      const safe = sanitize(fact.content);
+      if (safe.length >= 4) {
+        const cat = VALID.has(fact.category) ? fact.category : 'fact';
+        store.addMemory(safe, 'auto', cat, 'chat');
+      }
     }
   }
   return { success: true };
@@ -318,7 +387,12 @@ ipcMain.handle('approve-memories', (event, facts) => {
 
 ipcMain.handle('add-memory', (event, { content, category } = {}) => {
   if (!store || !content?.trim()) return { success: false };
-  const id = store.addMemory(content.trim(), 'manual', category || 'fact', 'chat');
+  // Cap memory content — too long is suspicious (likely prompt-injection
+  // payload) and slows retrieval.
+  const safe = String(content).trim().slice(0, 800);
+  const VALID_CATS = new Set(['fact', 'preference', 'project', 'entity', 'procedural']);
+  const cat = VALID_CATS.has(category) ? category : 'fact';
+  const id = store.addMemory(safe, 'manual', cat, 'chat');
   return { success: true, id };
 });
 
@@ -364,14 +438,16 @@ ipcMain.handle('save-tts-config', (e, cfg)  => { SettingsStore.setTtsConfig(cfg 
 
 // ─── Feedback ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle('save-feedback', (e, data) => {
+ipcMain.handle('save-feedback', (e, data = {}) => {
   if (!store) return { success: false };
+  // Cap each text field so a misbehaving renderer can't fill the DB.
+  const cap = (s, n) => String(s || '').slice(0, n);
   const id = store.addFeedback({
     sessionId:         activeSessionId,
-    userMessage:       data.userMessage,
-    assistantResponse: data.assistantResponse,
-    rating:            data.rating,
-    correction:        data.correction || null,
+    userMessage:       cap(data.userMessage, 8000),
+    assistantResponse: cap(data.assistantResponse, 32000),
+    rating:            data.rating === 1 ? 1 : (data.rating === -1 ? -1 : 0),
+    correction:        data.correction ? cap(data.correction, 8000) : null,
     model:             currentModel,
     agentId:           'friday',
     appMode:           'chat',
@@ -433,7 +509,13 @@ ipcMain.handle('save-whisper-config', (event, config) => { SettingsStore.setWhis
 
 ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
   return new Promise((resolve) => {
-    const { exePath, modelPath } = SettingsStore.getWhisperConfig();
+    // Cap renderer-supplied audio so a buggy/malicious renderer can't write
+    // gigabytes to the temp directory before whisper-cli even starts.
+    const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25MB ≈ ~25min mono WAV @16kHz
+    const byteLen = audioData?.byteLength ?? audioData?.length ?? 0;
+    if (byteLen > MAX_AUDIO_BYTES) return resolve({ success: false, error: 'audio-too-large' });
+
+    const { exePath, modelPath, useCpu, extraArgs } = SettingsStore.getWhisperConfig();
     if (!exePath || !modelPath) return resolve({ success: false, error: 'not-configured' });
 
     const cleanExe = exePath.replace(/^["']|["']$/g, '').trim();
@@ -449,10 +531,27 @@ ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
       // -l en + -bs 2 shaves multiple seconds off a typical dictation clip
       // vs. -l auto with default beam search, at no quality cost for English.
       const args = ['-m', modelPath, '-f', inputFile, '-l', 'en', '-bs', '2', '-t', '8', '-nt', '-np'];
-      execFile(cleanExe, args, { timeout: 60000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
+      // -ng disables GPU offload — needed when whisper.cpp's CUDA build
+      // doesn't support the user's GPU (e.g. Blackwell / sm_120 on older builds).
+      if (useCpu) args.push('-ng');
+      // Allow advanced users to append flags. spawn-style: split on whitespace,
+      // no shell, so quotes / pipes can't escape. Cap to 16 tokens.
+      if (typeof extraArgs === 'string' && extraArgs.trim()) {
+        const extras = extraArgs.trim().split(/\s+/).slice(0, 16);
+        args.push(...extras);
+      }
+      execFile(cleanExe, args, { timeout: 60000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout, stderr) => {
         try { fs.unlinkSync(audioIn); } catch {}
         try { if (inputFile !== audioIn) fs.unlinkSync(inputFile); } catch {}
-        if (err) { console.error('[Whisper]', err.message); return resolve({ success: false, error: err.message }); }
+        if (err) {
+          // Surface stderr too — whisper-cli writes "failed to initialize whisper context"
+          // and CUDA errors there, not in err.message. The renderer pattern-matches
+          // these strings to suggest the CPU-mode toggle.
+          const detail = (stderr || '').trim();
+          const msg = detail ? `${err.message}\n${detail}` : err.message;
+          console.error('[Whisper]', msg);
+          return resolve({ success: false, error: msg });
+        }
         const transcript = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean).join(' ');
         resolve({ success: true, transcript });
       });
@@ -492,8 +591,44 @@ ipcMain.handle('get-settings', () => ({
 
 ipcMain.handle('save-settings', (event, settings) => {
   try {
-    const appShortcuts = Array.isArray(settings?.appShortcuts) ? settings.appShortcuts : [];
-    const webBookmarks = Array.isArray(settings?.webBookmarks) ? settings.webBookmarks : [];
+    const appShortcutsRaw = Array.isArray(settings?.appShortcuts) ? settings.appShortcuts : [];
+    const webBookmarksRaw = Array.isArray(settings?.webBookmarks) ? settings.webBookmarks : [];
+
+    // Validate shortcuts: name + path must be non-empty strings; args must be
+    // an array (or a string we'll defer-split). The path itself is a user
+    // choice — we don't whitelist binaries — but reject obviously dangerous
+    // patterns so a typo'd settings save can't permanently arm the launcher.
+    const appShortcuts = [];
+    for (const s of appShortcutsRaw) {
+      if (!s || typeof s.name !== 'string' || typeof s.path !== 'string') continue;
+      const name = s.name.trim().slice(0, 60);
+      const exePath = s.path.trim();
+      if (!name || !exePath) continue;
+      // Reject inline shell pipelines. The launcher uses spawn (no shell), so
+      // these would not actually be interpreted, but it's a clear sign of a
+      // typo or paste-attack rather than a legitimate shortcut.
+      if (/[;&|`$]/.test(exePath)) continue;
+      let args = [];
+      if (Array.isArray(s.args)) args = s.args.map(a => String(a)).slice(0, 32);
+      else if (typeof s.args === 'string') args = s.args.split(/\s+/).filter(Boolean).slice(0, 32);
+      appShortcuts.push({ name, path: exePath, args });
+    }
+
+    // Validate bookmarks: every URL must be http(s).
+    const webBookmarks = [];
+    for (const b of webBookmarksRaw) {
+      if (!b || typeof b.name !== 'string' || typeof b.url !== 'string') continue;
+      const name = b.name.trim().slice(0, 60);
+      let url = b.url.trim();
+      if (!name || !url) continue;
+      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      try {
+        const u = new URL(url);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+        webBookmarks.push({ name, url: u.toString() });
+      } catch { /* skip invalid */ }
+    }
+
     SettingsStore.setAppShortcuts(appShortcuts);
     SettingsStore.setWebBookmarks(webBookmarks);
     if (toolRegistry) registerBuiltinTools(toolRegistry);
@@ -506,40 +641,15 @@ ipcMain.handle('save-settings', (event, settings) => {
 
 // ─── Integrations status ───────────────────────────────────────────────────────
 
-function safeDecodeJwtEmail(idToken) {
-  try {
-    const parts = String(idToken).split('.');
-    if (parts.length < 2) return null;
-    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
-    const json = Buffer.from(padded, 'base64').toString('utf8');
-    const data = JSON.parse(json);
-    return typeof data.email === 'string' ? data.email : null;
-  } catch { return null; }
-}
-
-function getGoogleTokenPath() {
-  try { return path.join(app.getPath('userData'), 'google-calendar-token.json'); }
-  catch { return path.join(process.cwd(), 'google-calendar-token.json'); }
-}
-
 function getGoogleCredentialsPath() {
   return process.env.GOOGLE_CREDENTIALS_PATH || path.join(process.cwd(), 'credentials.json');
 }
 
 ipcMain.handle('get-integrations-status', async () => {
   const credentialsPath = getGoogleCredentialsPath();
-  const tokenPath = getGoogleTokenPath();
   const googleCredentialsPresent = fs.existsSync(credentialsPath);
-  const googleTokenPresent = fs.existsSync(tokenPath);
-
-  let googleEmail = null;
-  if (googleTokenPresent) {
-    try {
-      const tokenJson = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-      googleEmail = safeDecodeJwtEmail(tokenJson?.id_token);
-    } catch {}
-  }
+  const googleTokenPresent = GoogleCalendarService.hasToken();
+  const googleEmail = googleTokenPresent ? GoogleCalendarService.getAccountEmail() : null;
 
   const ollamaRunning = await OllamaService.isRunning();
   const ollamaModels  = ollamaRunning ? await OllamaService.fetchModels() : [];
@@ -599,8 +709,7 @@ ipcMain.handle('google-calendar-connect', async () => {
 
 ipcMain.handle('google-calendar-logout', async () => {
   try {
-    const tokenPath = getGoogleTokenPath();
-    if (fs.existsSync(tokenPath)) fs.unlinkSync(tokenPath);
+    GoogleCalendarService.logout();
     return { success: true };
   } catch (error) { return { success: false, error: error.message || String(error) }; }
 });
@@ -665,7 +774,28 @@ ipcMain.handle('get-openrouter-key',  () => ({ key: SettingsStore.getOpenRouterA
 ipcMain.handle('save-openrouter-key', (_, { key } = {}) => { SettingsStore.setOpenRouterApiKey(key || ''); return { success: true }; });
 
 ipcMain.handle('get-ollama-url',  () => ({ url: SettingsStore.getOllamaBaseUrl() }));
-ipcMain.handle('save-ollama-url', (_, { url } = {}) => { SettingsStore.setOllamaBaseUrl(url || 'http://localhost:11434'); return { success: true }; });
+ipcMain.handle('save-ollama-url', (_, { url } = {}) => {
+  // Refuse anything that doesn't parse as http(s) on a private/loopback host.
+  // Otherwise a poisoned settings file could silently redirect every Ollama
+  // request to an external server, exfiltrating prompts and memory facts.
+  const candidate = (url || '').trim() || 'http://localhost:11434';
+  let parsed;
+  try { parsed = new URL(candidate); }
+  catch { return { success: false, error: 'Invalid URL.' }; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { success: false, error: 'Ollama URL must be http(s).' };
+  }
+  const host = parsed.hostname.toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    || host.endsWith('.local')
+    || /^10\./.test(host) || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (!isLocal) {
+    return { success: false, error: 'Ollama URL must point at a local/private network address.' };
+  }
+  SettingsStore.setOllamaBaseUrl(candidate);
+  return { success: true };
+});
 
 // ─── Hotkey ────────────────────────────────────────────────────────────────────
 
@@ -721,7 +851,7 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
   if (!ctx) {
     ctx = new SessionContext({
       sessionId,
-      permissionPolicy: PermissionPolicy.fullyOpen(),
+      permissionPolicy: PermissionPolicy.forChat(),
       costTracker:      new CostTracker(model),
     });
     _sessionContexts.set(sessionId, ctx);

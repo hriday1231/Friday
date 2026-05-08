@@ -47,7 +47,9 @@ async function handler(args) {
     );
   }
 
-  const targetUrl = SettingsStore.normalizeUrl(resolvedUrl);
+  let targetUrl;
+  try { targetUrl = SettingsStore.safeHttpUrl(resolvedUrl); }
+  catch (err) { throw new Error(`Bookmark "${name}" resolves to an unsafe URL: ${err.message}`); }
   const browserType = normalizeBrowser(browser);
 
   if (browserType === 'default') {

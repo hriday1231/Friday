@@ -56,7 +56,6 @@ src/main/                  Electron main process (Node.js)
   agents/
     AgentRuntime.js          Event-driven tool-use loop (single chat entry point)
     SessionContext.js        Per-session abort + permission + cost tracker
-    CompactionManager.js     Long-context message compaction
     CostTracker.js           Token usage and USD cost accounting
   providers/                 Groq / Gemini / OpenRouter / Ollama adapters
   tools/builtin/             One file per tool: { declaration, handler }

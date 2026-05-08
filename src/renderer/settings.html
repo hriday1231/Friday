@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: data:; connect-src 'self' blob: http://localhost:* http://127.0.0.1:*; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
   <title>Friday Settings</title>
   <link rel="stylesheet" href="styles/main.css" />
   <link rel="stylesheet" href="styles/settings.css" />
@@ -371,6 +373,19 @@
                 <input type="text" id="whisperModelPath" class="voice-input"
                   placeholder="C:\Whisper\ggml-large-v3-turbo.bin" />
               </div>
+              <label class="settings-field-label" style="margin-top:10px;margin-bottom:6px">
+                <input type="checkbox" id="whisperUseCpu" style="margin-right:6px">
+                Force CPU mode (slower but always works)
+              </label>
+              <p style="font-size:11.5px;color:var(--t-mid);margin:0 0 8px 22px">
+                Enable this if your build of <code>whisper-cli</code> doesn't support your GPU
+                (e.g. Blackwell / sm_120 cards on older CUDA builds). Adds <code>-ng</code> to disable GPU offload.
+              </p>
+              <div class="voice-field-row">
+                <label class="voice-label">Extra args (advanced)</label>
+                <input type="text" id="whisperExtraArgs" class="voice-input"
+                  placeholder="e.g. -t 8 -bs 5" />
+              </div>
             </div>
             <div class="settings-card-actions">
               <button id="saveWhisperBtn" class="settings-primary-btn">Save</button>
@@ -428,8 +443,9 @@
                 <input type="text" id="wakeWordPhrase" class="settings-text-input" placeholder="hey friday" style="margin-top:4px">
               </label>
               <p style="font-size:11.5px;color:var(--t-mid);margin:6px 0 0">
-                Requires Whisper to be configured. The phrase is matched case-insensitively anywhere
-                in the transcription. Any words after the phrase are sent as a command automatically.
+                Whisper must be configured (above). The phrase is matched case-insensitively anywhere
+                in the transcription. Any words you say <em>after</em> the phrase are submitted as a
+                command automatically.
               </p>
             </div>
             <div class="settings-card-actions">
@@ -437,14 +453,51 @@
             </div>
           </div>
 
+          <!-- ── Mic / wake-word diagnostics ────────────────────────────── -->
+          <div class="settings-card" id="card-mic-test" style="margin-top:12px">
+            <div class="settings-card-header">
+              <div>
+                <div class="settings-card-title">Mic &amp; Wake-Word Diagnostics</div>
+                <div class="settings-card-subtitle">Verify your microphone and the wake-phrase pipeline</div>
+              </div>
+            </div>
+            <div class="settings-card-body">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <button id="micTestBtn" class="settings-action-btn">▶ Test microphone (5s)</button>
+                <span id="micTestStatus" style="font-size:12px;color:var(--t-mid)">Click to listen for 5 seconds.</span>
+              </div>
+              <div id="micMeter" style="height:10px;border-radius:5px;background:rgba(255,255,255,.06);overflow:hidden;margin-bottom:6px">
+                <div id="micMeterFill" style="height:100%;width:0%;background:linear-gradient(90deg,#3a8,#5d3);transition:width 60ms linear"></div>
+              </div>
+              <div id="micTestResult" style="font-size:11.5px;color:var(--t-mid);min-height:1.4em"></div>
+
+              <hr style="border:0;border-top:1px solid rgba(255,255,255,.06);margin:14px 0 12px">
+
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <button id="wakeTestBtn" class="settings-action-btn">🎙 Test wake phrase (4s)</button>
+                <span id="wakeTestStatus" style="font-size:12px;color:var(--t-mid)">Records 4s and transcribes via Whisper.</span>
+              </div>
+              <div id="wakeTestResult" style="font-size:12px;color:var(--t-mid);min-height:1.4em;font-family:var(--mono, monospace)"></div>
+            </div>
+          </div>
+
           <div class="settings-card" style="margin-top:12px">
             <div class="settings-card-body" style="font-size:12.5px;line-height:1.7;color:var(--t-mid)">
-              <strong style="color:var(--t-hi)">How it works:</strong><br>
+              <strong style="color:var(--t-hi)">Manual mic input:</strong>
               Click the 🎤 mic button in the chat input, speak, then click it again to stop.
-              Whisper transcribes the recording locally using your GPU (CUDA) — typically under 1 second
-              for short clips on an RTX-class card.<br><br>
-              <strong style="color:var(--t-hi)">Falls back to OS speech recognition</strong> if Whisper
-              paths are not configured.
+              Whisper transcribes the recording locally — typically under 1 second on an RTX-class GPU.
+              Falls back to OS speech recognition if Whisper paths are not set.
+              <br><br>
+              <strong style="color:var(--t-hi)">When the wake word fires:</strong>
+              <ol style="margin:6px 0 0 18px;padding:0">
+                <li>Friday's window comes to the foreground.</li>
+                <li>If you said anything <em>after</em> the wake phrase
+                    (e.g. <em>"hey friday open YouTube"</em>), that command
+                    is submitted to the chat immediately — no extra clicks.</li>
+                <li>If you only said the phrase alone, the mic button
+                    activates so you can speak. Click the mic again
+                    (or press <kbd>Esc</kbd>) to stop and transcribe.</li>
+              </ol>
             </div>
           </div>
         </section>
@@ -539,6 +592,7 @@
     </div>
   </div>
 
+  <script src="wakeWord.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

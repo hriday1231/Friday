@@ -3,10 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Defence-in-depth CSP: only allow scripts/styles/images from the app
+       bundle. blob: is allowed for script-src AND worker-src so the inline
+       AudioWorklet (Whisper STT) and pdfjs-dist Web Worker can load. Inline
+       styles are required by KaTeX rendering, so 'unsafe-inline' is left on
+       for style-src only. img-src allows data: for pasted screenshots and
+       https: for favicons. No remote scripts. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: data:; connect-src 'self' blob: http://localhost:* http://127.0.0.1:*; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
   <title>Friday Assistant</title>
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="../../node_modules/katex/dist/katex.min.css">
   <script src="../../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
   <script src="../../node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
   <script src="../../node_modules/katex/dist/katex.min.js"></script>
 </head>
@@ -187,77 +196,6 @@
 
         <div class="sidebar-footer">
           <button id="clearChatBtn" class="clear-btn">+ New Chat</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Settings Overlay -->
-  <div id="settingsOverlay" class="settings-overlay hidden">
-    <div class="settings-panel">
-      <div class="settings-header">
-        <h2>Settings</h2>
-        <button id="closeSettingsBtn" class="settings-close-btn">×</button>
-      </div>
-      <div class="settings-content">
-        <section class="settings-section">
-          <h3>App Shortcuts</h3>
-          <p class="settings-hint">Map friendly names to apps you want Friday to launch (e.g. Code, Steam, Edge, Brave).</p>
-          <table class="settings-table" id="appShortcutsTable">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Path</th>
-                <th>Args (optional)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <!-- Filled dynamically -->
-            </tbody>
-          </table>
-          <button id="addAppShortcutBtn" class="settings-add-btn">Add App Shortcut</button>
-        </section>
-
-        <section class="settings-section">
-          <h3>Web Bookmarks</h3>
-          <p class="settings-hint">Frequently used sites Friday can open by name (e.g. YT, Insta, Calendar).</p>
-          <table class="settings-table" id="webBookmarksTable">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>URL</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <!-- Filled dynamically -->
-            </tbody>
-          </table>
-          <button id="addBookmarkBtn" class="settings-add-btn">Add Bookmark</button>
-        </section>
-
-        <section class="settings-section">
-          <h3>Aliases (optional)</h3>
-          <p class="settings-hint">Map short names (e.g. YT) to a URL or bookmark name.</p>
-          <table class="settings-table" id="aliasesTable">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Target (URL or bookmark name)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <!-- Filled dynamically -->
-            </tbody>
-          </table>
-          <button id="addAliasBtn" class="settings-add-btn">Add Alias</button>
-        </section>
-
-        <div class="settings-footer">
-          <button id="saveSettingsBtn" class="settings-save-btn">Save</button>
-          <button id="cancelSettingsBtn" class="settings-cancel-btn">Cancel</button>
         </div>
       </div>
     </div>

@@ -668,8 +668,12 @@ async function loadWhisperConfig() {
   const cfg = await window.electronAPI?.getWhisperConfig?.() || {};
   const exeInput   = $('whisperExePath');
   const modelInput = $('whisperModelPath');
+  const useCpuEl   = $('whisperUseCpu');
+  const extraEl    = $('whisperExtraArgs');
   if (exeInput)   exeInput.value   = cfg.exePath   || '';
   if (modelInput) modelInput.value = cfg.modelPath || '';
+  if (useCpuEl)   useCpuEl.checked = !!cfg.useCpu;
+  if (extraEl)    extraEl.value    = cfg.extraArgs || '';
   _updateWhisperBadge(cfg);
 }
 
@@ -724,6 +728,8 @@ function wireVoiceEvents() {
     const cfg = {
       exePath:   ($('whisperExePath')?.value   || '').trim(),
       modelPath: ($('whisperModelPath')?.value || '').trim(),
+      useCpu:    !!$('whisperUseCpu')?.checked,
+      extraArgs: ($('whisperExtraArgs')?.value || '').trim(),
     };
     const res = await window.electronAPI?.saveWhisperConfig?.(cfg);
     if (res?.success) {
@@ -738,17 +744,39 @@ function wireVoiceEvents() {
     const cfg = {
       exePath:   ($('whisperExePath')?.value   || '').trim(),
       modelPath: ($('whisperModelPath')?.value || '').trim(),
+      useCpu:    !!$('whisperUseCpu')?.checked,
+      extraArgs: ($('whisperExtraArgs')?.value || '').trim(),
     };
     if (!cfg.exePath || !cfg.modelPath) {
       showToast('Fill in both paths first', 'warn'); return;
     }
-    showToast('Checking paths…', 'info');
-    // Ask main process to verify files exist via a quick test
-    const res = await window.electronAPI?.saveWhisperConfig?.(cfg);
-    // Just verify the config was saved; real test happens on first use
-    if (res?.success) {
-      _updateWhisperBadge(cfg);
-      showToast('Paths saved — will be tested on first voice use', 'ok');
+    showToast('Saving and running test transcription…', 'info');
+    const save = await window.electronAPI?.saveWhisperConfig?.(cfg);
+    if (!save?.success) { showToast('Save failed', 'err'); return; }
+    _updateWhisperBadge(cfg);
+    // Smoke-test the binary on a 1-second silence WAV so users find out NOW
+    // (not on first wake-word fire) whether their build can initialize.
+    try {
+      if (typeof window.WakeWordDetector?._encodeWav !== 'function') {
+        showToast('Saved (transcribe test unavailable)', 'ok'); return;
+      }
+      const silence = new Float32Array(16000); // 1s of zeros at 16kHz
+      const wav     = window.WakeWordDetector._encodeWav([silence], 16000);
+      const res     = await window.electronAPI?.transcribeAudio?.(wav, 'audio/wav');
+      if (res?.success) {
+        showToast('Whisper ✓ initialized successfully', 'ok');
+      } else {
+        const err = res?.error || 'unknown error';
+        const isInitFail = /failed to initialize whisper context|cuda|gpu/i.test(err);
+        showToast(
+          isInitFail
+            ? 'Whisper failed to start — try checking "Force CPU mode"'
+            : `Whisper error: ${err.slice(0, 140)}`,
+          'err'
+        );
+      }
+    } catch (err) {
+      showToast(`Test error: ${err.message || err}`, 'err');
     }
   });
 
@@ -786,6 +814,234 @@ function wireVoiceEvents() {
     utt.pitch = parseFloat($('ttsPitch')?.value || '1');
     window.speechSynthesis.speak(utt);
   });
+
+  // ── Mic / wake-word diagnostics ────────────────────────────────────────
+  $('micTestBtn')?.addEventListener('click', () => runMicLevelTest());
+  $('wakeTestBtn')?.addEventListener('click', () => runWakePhraseTest());
+}
+
+// Live RMS meter — opens the mic for 5s, shows peak vs the WakeWordDetector
+// threshold (0.012 by default). Lets users see whether their mic is being
+// picked up at all and whether their normal speaking volume crosses the
+// trigger threshold.
+const _MIC_TEST_THRESHOLD = 0.012; // matches WakeWordDetector default
+
+let _micTestRunning = false;
+async function runMicLevelTest() {
+  if (_micTestRunning) return;
+  const btn    = $('micTestBtn');
+  const status = $('micTestStatus');
+  const fill   = $('micMeterFill');
+  const result = $('micTestResult');
+  if (!btn || !status || !fill || !result) return;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    result.textContent = 'Microphone API not available.';
+    return;
+  }
+
+  let stream, ctx;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    result.textContent = `Mic permission denied: ${err.message || err}`;
+    return;
+  }
+  try {
+    ctx = new AudioContext();
+  } catch (err) {
+    stream.getTracks().forEach(t => t.stop());
+    result.textContent = `AudioContext failed: ${err.message || err}`;
+    return;
+  }
+
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+
+  _micTestRunning = true;
+  btn.disabled = true;
+  status.textContent = 'Listening… speak normally.';
+  result.textContent = '';
+
+  const buf = new Float32Array(analyser.fftSize);
+  let peak = 0, sum = 0, samples = 0, displayPeak = 0;
+  const start = performance.now();
+  const DURATION_MS = 5000;
+
+  await new Promise(resolve => {
+    const tick = () => {
+      analyser.getFloatTimeDomainData(buf);
+      let s = 0;
+      for (const v of buf) s += v * v;
+      const rms = Math.sqrt(s / buf.length);
+      sum += rms; samples++;
+      if (rms > peak) peak = rms;
+      // Peak-hold display: decays slowly while live RMS pushes it up.
+      displayPeak = Math.max(rms, displayPeak * 0.92);
+      // Map [0..0.05] → [0..100%] with mild log curve so quiet voices show up.
+      const pct = Math.min(100, Math.pow(displayPeak / 0.05, 0.7) * 100);
+      fill.style.width = pct.toFixed(1) + '%';
+      // Tint red when the live level crosses the wake-word threshold.
+      fill.style.background = (rms >= _MIC_TEST_THRESHOLD)
+        ? 'linear-gradient(90deg,#3a8,#cd6)'
+        : 'linear-gradient(90deg,#3a8,#5d3)';
+      if (performance.now() - start < DURATION_MS) requestAnimationFrame(tick);
+      else resolve();
+    };
+    requestAnimationFrame(tick);
+  });
+
+  // Tear down
+  try { stream.getTracks().forEach(t => t.stop()); } catch {}
+  try { await ctx.close(); } catch {}
+  fill.style.width = '0%';
+  status.textContent = 'Click to listen for 5 seconds.';
+
+  const avg = samples > 0 ? sum / samples : 0;
+  const verdict = peak < 0.0005
+    ? 'No signal — is the right mic selected in Windows Sound settings?'
+    : peak < _MIC_TEST_THRESHOLD
+      ? 'Mic works but you were quieter than the wake-word threshold. Speak louder or move closer.'
+      : 'Mic works and crossed the wake-word threshold — wake word should trigger.';
+  result.innerHTML = `Peak: <strong>${peak.toFixed(4)}</strong> · Avg: <strong>${avg.toFixed(4)}</strong> · Threshold: <strong>${_MIC_TEST_THRESHOLD}</strong><br>${verdict}`;
+  btn.disabled = false;
+  _micTestRunning = false;
+}
+
+// Records 4 seconds via AudioWorklet → WAV (no ffmpeg needed), sends to
+// whisper-cli, then matches the result against the configured wake phrase.
+// Uses the SAME pipeline as WakeWordDetector so the test result accurately
+// reflects what wake word will do in production.
+let _wakeTestRunning = false;
+async function runWakePhraseTest() {
+  if (_wakeTestRunning) return;
+  const btn    = $('wakeTestBtn');
+  const status = $('wakeTestStatus');
+  const result = $('wakeTestResult');
+  if (!btn || !status || !result) return;
+
+  // Reuse the in-form values so the user doesn't have to save first.
+  const phrase = ($('wakeWordPhrase')?.value || 'hey friday').trim().toLowerCase();
+  const cfg    = await window.electronAPI?.getWhisperConfig?.();
+  if (!cfg?.exePath || !cfg?.modelPath) {
+    result.innerHTML = '<span style="color:#e88">Whisper isn\'t configured. Set whisper-cli + model paths above first.</span>';
+    return;
+  }
+
+  let stream, ctx, worklet, source, silencer;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    result.innerHTML = `<span style="color:#e88">Mic permission denied: ${err.message || err}</span>`;
+    return;
+  }
+  try {
+    ctx = new AudioContext({ sampleRate: 16000 });
+  } catch (err) {
+    stream.getTracks().forEach(t => t.stop());
+    result.innerHTML = `<span style="color:#e88">AudioContext failed: ${err.message || err}</span>`;
+    return;
+  }
+
+  // Reuse the inline worklet bundled with WakeWordDetector — same encoder,
+  // same WAV bytes the production wake path will produce.
+  const workletCode = `
+    class PCMCaptureProcessor extends AudioWorkletProcessor {
+      process(inputs) {
+        const ch = inputs[0]?.[0];
+        if (ch && ch.length > 0) this.port.postMessage(new Float32Array(ch));
+        return true;
+      }
+    }
+    registerProcessor('settings-pcm-capture', PCMCaptureProcessor);
+  `;
+  try {
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    const url  = URL.createObjectURL(blob);
+    try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+  } catch (err) {
+    stream.getTracks().forEach(t => t.stop());
+    try { await ctx.close(); } catch {}
+    result.innerHTML = `<span style="color:#e88">AudioWorklet failed: ${err.message || err}. CSP or browser support issue?</span>`;
+    return;
+  }
+
+  _wakeTestRunning = true;
+  btn.disabled = true;
+  result.textContent = '';
+
+  const frames = [];
+  try {
+    worklet  = new AudioWorkletNode(ctx, 'settings-pcm-capture');
+    source   = ctx.createMediaStreamSource(stream);
+    silencer = ctx.createGain();
+    silencer.gain.value = 0;
+    source.connect(worklet);
+    worklet.connect(silencer);
+    silencer.connect(ctx.destination);
+    worklet.port.onmessage = (e) => { frames.push(e.data); };
+  } catch (err) {
+    stream.getTracks().forEach(t => t.stop());
+    try { await ctx.close(); } catch {}
+    result.innerHTML = `<span style="color:#e88">Capture wiring failed: ${err.message || err}</span>`;
+    btn.disabled = false; _wakeTestRunning = false;
+    return;
+  }
+
+  // Visual countdown
+  const DURATION_MS = 4000;
+  const startedAt = performance.now();
+  const tickStatus = () => {
+    const remaining = Math.max(0, Math.ceil((DURATION_MS - (performance.now() - startedAt)) / 1000));
+    status.textContent = remaining > 0 ? `Listening… ${remaining}s` : 'Transcribing…';
+    if (remaining > 0 && _wakeTestRunning) requestAnimationFrame(tickStatus);
+  };
+  tickStatus();
+
+  await new Promise(r => setTimeout(r, DURATION_MS));
+
+  // Tear down audio pipeline
+  try { worklet.disconnect(); source.disconnect(); silencer.disconnect(); } catch {}
+  stream.getTracks().forEach(t => t.stop());
+  try { await ctx.close(); } catch {}
+
+  status.textContent = 'Transcribing…';
+  try {
+    if (typeof window.WakeWordDetector?._encodeWav !== 'function') {
+      result.innerHTML = '<span style="color:#e88">WakeWordDetector script not loaded.</span>';
+      return;
+    }
+    const wavBytes = window.WakeWordDetector._encodeWav(frames, 16000);
+    const res      = await window.electronAPI?.transcribeAudio?.(wavBytes, 'audio/wav');
+    if (!res?.success) {
+      const err = res?.error || 'unknown error';
+      const escErr = String(err).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const isInitFail = /failed to initialize whisper context|cuda|gpu|compute capability/i.test(err);
+      const hint = isInitFail
+        ? '<br><span style="color:#fc8">Hint: your whisper.cpp build may not support this GPU. Try enabling <strong>"Force CPU mode"</strong> in the Whisper card above and re-test.</span>'
+        : '';
+      result.innerHTML = `<span style="color:#e88">Transcription failed: ${escErr}</span>${hint}`;
+    } else if (!res.transcript) {
+      result.innerHTML = '<span style="color:var(--t-mid)">Whisper returned no text. Try speaking louder or check the mic test above.</span>';
+    } else {
+      const text  = res.transcript;
+      const lower = text.toLowerCase().trim();
+      const matched = lower.includes(phrase);
+      const tail = matched ? lower.replace(phrase, '').trim() : '';
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      result.innerHTML = matched
+        ? `Heard: <strong>"${escape(text)}"</strong><br><span style="color:#6c6">✓ Wake phrase "${escape(phrase)}" detected.</span>` +
+          (tail ? `<br>Would submit command: <strong>"${escape(tail)}"</strong>` : '<br>(no command after the phrase — mic would auto-activate)')
+        : `Heard: <strong>"${escape(text)}"</strong><br><span style="color:#e88">✗ Phrase "${escape(phrase)}" not found in transcript.</span>`;
+    }
+  } catch (err) {
+    result.innerHTML = `<span style="color:#e88">Test failed: ${err.message || err}</span>`;
+  } finally {
+    status.textContent = 'Records 4s and transcribes via Whisper.';
+    btn.disabled = false;
+    _wakeTestRunning = false;
+  }
 }
 
 // ── Wake word settings ────────────────────────────────────────────────────────

@@ -2,8 +2,8 @@
 /**
  * Friday Behavioral Eval — LLM-as-Judge
  *
- * Runs the backend OrchestratorAgent against a suite of prompts and uses
- * Gemini as a judge to score each response against a plain-English rubric.
+ * Runs the AgentRuntime against a suite of prompts and uses Gemini as a judge
+ * to score each response against a plain-English rubric.
  *
  * Why LLM-as-judge instead of assertion-based tests:
  *   AI responses are non-deterministic. A judge can reason about whether the
@@ -37,12 +37,17 @@ Module._load = function (request, parent, isMain) {
     };
   }
 
-  // Mock electron so tools that use shell.openExternal don't actually open browsers
+  // Mock electron — shell.openExternal records the URL instead of launching;
+  // safeStorage is unavailable so SettingsStore falls back to plaintext.
   if (request === 'electron') {
     return {
+      app: {
+        isReady: () => false,
+        getPath: () => require('os').tmpdir(),
+      },
+      safeStorage: { isEncryptionAvailable: () => false },
       shell: {
         openExternal: async (url) => {
-          // Record the call but don't actually launch anything
           process._evalOpenedUrls = process._evalOpenedUrls || [];
           process._evalOpenedUrls.push(url);
         }
@@ -58,19 +63,23 @@ const path = require('path');
 const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const ToolRegistry   = require('../src/main/tools/ToolRegistry');
-const GeminiProvider = require('../src/main/providers/GeminiProvider');
-const OllamaProvider = require('../src/main/providers/OllamaProvider');
-const OrchestratorAgent = require('../src/main/agents/OrchestratorAgent');
-const OllamaService  = require('../src/main/services/OllamaService');
+const ToolRegistry         = require('../src/main/tools/ToolRegistry');
+const GeminiProvider       = require('../src/main/providers/GeminiProvider');
+const OllamaProvider       = require('../src/main/providers/OllamaProvider');
+const { ProviderManager }  = require('../src/main/providers/ProviderManager');
+const AgentRuntime         = require('../src/main/agents/AgentRuntime');
+const SessionContext       = require('../src/main/agents/SessionContext');
+const { PermissionPolicy } = require('../src/main/agents/PermissionManager');
+const { CostTracker }      = require('../src/main/agents/CostTracker');
+const OllamaService        = require('../src/main/services/OllamaService');
 
-const { declaration: braveSearchDecl,       handler: braveSearchHandler       } = require('../src/main/tools/builtin/braveSearch');
-const { declaration: openUrlDecl,           handler: openUrlHandler           } = require('../src/main/tools/builtin/openUrl');
-const { declaration: openBookmarkDecl,      handler: openBookmarkHandler      } = require('../src/main/tools/builtin/openBookmark');
-const { declaration: launchAppDecl,         handler: launchAppHandler         } = require('../src/main/tools/builtin/launchApp');
-const { declaration: addEventDecl,          handler: addEventHandler          } = require('../src/main/tools/builtin/addEvent');
-const { declaration: editEventDecl,         handler: editEventHandler         } = require('../src/main/tools/builtin/editEvent');
-const { declaration: deleteEventDecl,       handler: deleteEventHandler       } = require('../src/main/tools/builtin/deleteEvent');
+const { declaration: braveSearchDecl,        handler: braveSearchHandler        } = require('../src/main/tools/builtin/braveSearch');
+const { declaration: openUrlDecl,            handler: openUrlHandler            } = require('../src/main/tools/builtin/openUrl');
+const { declaration: openBookmarkDecl,       handler: openBookmarkHandler       } = require('../src/main/tools/builtin/openBookmark');
+const { declaration: launchAppDecl,          handler: launchAppHandler          } = require('../src/main/tools/builtin/launchApp');
+const { declaration: addEventDecl,           handler: addEventHandler           } = require('../src/main/tools/builtin/addEvent');
+const { declaration: editEventDecl,          handler: editEventHandler          } = require('../src/main/tools/builtin/editEvent');
+const { declaration: deleteEventDecl,        handler: deleteEventHandler        } = require('../src/main/tools/builtin/deleteEvent');
 const { declaration: getCalendarSummaryDecl, handler: getCalendarSummaryHandler } = require('../src/main/tools/builtin/getCalendarSummary');
 
 // ─── CLI args ──────────────────────────────────────────────────────────────
@@ -93,17 +102,6 @@ const c = {
 };
 
 // ─── Test suite ────────────────────────────────────────────────────────────
-/**
- * Each test case:
- *   tag          - category for --filter
- *   name         - human label
- *   prompt       - string, or array of strings for multi-turn
- *   criterion    - plain-English rubric the judge uses to score the response
- *   expectTools  - (optional) tool names that MUST appear in tool_calls
- *   noTools      - (optional) asserts NO tools were called
- *   requires     - (optional) 'BRAVE_API_KEY' | 'GOOGLE_AUTH' — skip if absent
- *   multiTurn    - (optional) true → prompts are sequential, judge sees final reply
- */
 const TEST_CASES = [
   // ── General chat ────────────────────────────────────────────────────────
   {
@@ -217,10 +215,10 @@ const TEST_CASES = [
 // ─── Instrumented registry ─────────────────────────────────────────────────
 class InstrumentedRegistry extends ToolRegistry {
   constructor() { super(); this.callLog = []; }
-  async executeTool(name, args = {}) {
+  async executeTool(name, args = {}, onStream, signal) {
     const entry = { name, args, result: null, error: null };
     try {
-      const r = await super.executeTool(name, args);
+      const r = await super.executeTool(name, args, onStream, signal);
       entry.result = r;
       this.callLog.push(entry);
       return r;
@@ -233,16 +231,51 @@ class InstrumentedRegistry extends ToolRegistry {
   reset() { this.callLog = []; }
 }
 
+// ─── In-memory stand-in for PersistentStore ────────────────────────────────
+// Provides just enough API for AgentRuntime + the tools to operate in tests.
+class MockStore {
+  constructor() {
+    this._messages = []; // { sessionId, role, content }
+    this._titles   = new Map();
+  }
+  // Reads
+  getRelevantMemory()   { return []; }
+  getRelevantEpisodes() { return []; }
+  getRelevantFewShots() { return []; }
+  getSessionSummary()   { return null; }
+  getSession(sessionId) { return { id: sessionId, title: this._titles.get(sessionId) || null }; }
+  getAllPairs(sessionId) {
+    const out = [];
+    const msgs = this._messages.filter(m => m.sessionId === sessionId);
+    for (let i = 0; i < msgs.length - 1; i++) {
+      if (msgs[i].role === 'user' && msgs[i + 1].role === 'assistant') {
+        out.push({ user: msgs[i].content, assistant: msgs[i + 1].content });
+        i++;
+      }
+    }
+    return out;
+  }
+  getRecentPairs(sessionId, limit = 10) {
+    return this.getAllPairs(sessionId).slice(-limit);
+  }
+  // Writes (mostly no-ops in tests)
+  addMessage(sessionId, role, content) { this._messages.push({ sessionId, role, content }); return 'mock-id'; }
+  touchSession(sessionId, title) { if (title) this._titles.set(sessionId, title); }
+  indexSessionTags() {}
+  async indexSessionEpisode() {}
+  setSessionSummary() {}
+}
+
 // ─── Setup ─────────────────────────────────────────────────────────────────
 function buildRegistry() {
   const reg = new InstrumentedRegistry();
-  reg.registerBuiltin(braveSearchDecl.name,       braveSearchDecl,       braveSearchHandler);
-  reg.registerBuiltin(openUrlDecl.name,           openUrlDecl,           openUrlHandler);
-  reg.registerBuiltin(openBookmarkDecl.name,      openBookmarkDecl,      openBookmarkHandler);
-  reg.registerBuiltin(launchAppDecl.name,         launchAppDecl,         launchAppHandler);
-  reg.registerBuiltin(addEventDecl.name,          addEventDecl,          addEventHandler);
-  reg.registerBuiltin(editEventDecl.name,         editEventDecl,         editEventHandler);
-  reg.registerBuiltin(deleteEventDecl.name,       deleteEventDecl,       deleteEventHandler);
+  reg.registerBuiltin(braveSearchDecl.name,        braveSearchDecl,        braveSearchHandler);
+  reg.registerBuiltin(openUrlDecl.name,            openUrlDecl,            openUrlHandler);
+  reg.registerBuiltin(openBookmarkDecl.name,       openBookmarkDecl,       openBookmarkHandler);
+  reg.registerBuiltin(launchAppDecl.name,          launchAppDecl,          launchAppHandler);
+  reg.registerBuiltin(addEventDecl.name,           addEventDecl,           addEventHandler);
+  reg.registerBuiltin(editEventDecl.name,          editEventDecl,          editEventHandler);
+  reg.registerBuiltin(deleteEventDecl.name,        deleteEventDecl,        deleteEventHandler);
   reg.registerBuiltin(getCalendarSummaryDecl.name, getCalendarSummaryDecl, getCalendarSummaryHandler);
   return reg;
 }
@@ -272,7 +305,7 @@ async function judge({ prompt, response, toolCalls, criterion, expectTools, noTo
     : '  (none)';
 
   const toolConstraints = [];
-  if (noTools)      toolConstraints.push('IMPORTANT: No tools should have been called.');
+  if (noTools)             toolConstraints.push('IMPORTANT: No tools should have been called.');
   if (expectTools?.length) toolConstraints.push(`IMPORTANT: The following tools MUST have been called: ${expectTools.join(', ')}.`);
 
   const judgePrompt = `You are evaluating a personal AI assistant called Friday.
@@ -312,13 +345,14 @@ async function main() {
   const registry = buildRegistry();
   const geminiProvider = new GeminiProvider(registry);
   const ollamaProvider = new OllamaProvider(registry);
-  const providers = { gemini: geminiProvider, ollama: ollamaProvider };
+  const providerManager = new ProviderManager({
+    gemini: geminiProvider,
+    ollama: ollamaProvider,
+  });
 
   let modelName = process.env.DEFAULT_MODEL || 'gemini-2.0-flash-exp';
-  let modelType = 'gemini';
 
   if (modelArg === 'ollama') {
-    modelType = 'ollama';
     const ollamaModels = await OllamaService.fetchModels();
     modelName = ollamaProvider.getPreferredFallback(ollamaModels);
     if (!modelName) {
@@ -335,7 +369,7 @@ async function main() {
   }
 
   console.log(`\n${c.bold}${c.cyan}🧸 Friday Behavioral Eval${c.reset}`);
-  console.log(`${c.gray}  Model : ${modelName} (${modelType})`);
+  console.log(`${c.gray}  Model : ${modelName}`);
   console.log(`  Judge : ${noJudge ? 'disabled' : 'Gemini (LLM-as-judge)'}`);
   console.log(`  Tests : ${suite.length}${filterTag ? ` [tag: ${filterTag}]` : ''}${c.reset}\n`);
 
@@ -359,8 +393,21 @@ async function main() {
       continue;
     }
 
-    // Fresh agent per test so history doesn't bleed between tests
-    const agent = new OrchestratorAgent(registry, providers);
+    // Fresh runtime + session per test so history doesn't bleed between tests
+    const store = new MockStore();
+    const runtime = new AgentRuntime({
+      toolRegistry:    registry,
+      providerManager,
+      store,
+      emit:            () => {},
+      getScreenContext: () => null,
+    });
+    const sessionId = `eval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const ctx = new SessionContext({
+      sessionId,
+      permissionPolicy: PermissionPolicy.fullyOpen(), // skip prompts in tests
+      costTracker:      new CostTracker(modelName),
+    });
     registry.reset();
 
     let response = '';
@@ -369,7 +416,7 @@ async function main() {
 
     try {
       for (const p of prompts) {
-        const res = await agent.processMessage(p, modelName, modelType, {});
+        const res = await runtime.processMessage(p, modelName, ctx, {});
         response = res.response;
       }
     } catch (err) {

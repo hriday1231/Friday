@@ -48,7 +48,8 @@ class OpenRouterProvider extends BaseProvider {
     const lastAssistant = messages.slice().reverse().find(m => m.role === 'assistant');
     const lastToolCalls = lastAssistant?.tool_calls || [];
     results.forEach((r, i) => {
-      const id = lastToolCalls[i]?.id || `call_${r.name}`;
+      // Prefer the explicit callId (threaded from AgentRuntime).
+      const id = r.callId || lastToolCalls[i]?.id || `call_${r.name}`;
       messages.push({ role: 'tool', tool_call_id: id, content: String(r.result) });
     });
   }
@@ -57,13 +58,14 @@ class OpenRouterProvider extends BaseProvider {
 
   getCheapModel() { return 'meta-llama/llama-3.1-8b-instruct:free'; }
 
-  async chatWithTools(messages, modelName, onChunk, signal, appMode = 'chat') {
+  async chatWithTools(messages, modelName, onChunk, signal, appMode = 'chat', opts = {}) {
     const apiKey = OpenRouterService.getApiKey();
     if (!apiKey) {
       throw new Error('OpenRouter API key not configured. Add it in Settings → Models & API Keys.');
     }
 
-    const ollamaTools = this.toolRegistry.getOllamaTools();
+    const excludeTools = opts && opts.excludeTools;
+    const ollamaTools = this.toolRegistry.getOllamaTools(excludeTools);
     const tools = ollamaTools.map(t => ({
       type:     'function',
       function: { name: t.function.name, description: t.function.description, parameters: t.function.parameters },
@@ -79,6 +81,7 @@ class OpenRouterProvider extends BaseProvider {
           tools:       tools.length ? tools : undefined,
           tool_choice: tools.length ? 'auto' : undefined,
           stream:      true,
+          stream_options: { include_usage: true },
           temperature: this._temperature(appMode),
           max_tokens:  this._maxTokens(appMode),
         },
@@ -102,6 +105,7 @@ class OpenRouterProvider extends BaseProvider {
     let fullText = '';
     const toolCallChunks = [];
     let buffer = '';
+    let usage  = null;
 
     for await (const rawChunk of response.data) {
       buffer += rawChunk.toString();
@@ -114,6 +118,12 @@ class OpenRouterProvider extends BaseProvider {
         if (payload === '[DONE]') continue;
         try {
           const parsed = JSON.parse(payload);
+          if (parsed.usage) {
+            usage = {
+              inputTokens:  parsed.usage.prompt_tokens     || 0,
+              outputTokens: parsed.usage.completion_tokens || 0,
+            };
+          }
           const delta  = parsed.choices?.[0]?.delta;
           if (!delta) continue;
 
@@ -138,13 +148,15 @@ class OpenRouterProvider extends BaseProvider {
     }
 
     const rawToolCalls = toolCallChunks.filter(Boolean);
-    const toolCalls = rawToolCalls.map(tc => {
+    const toolCalls = rawToolCalls.map((tc, i) => {
       let args = {};
       try { args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {}; } catch {}
-      return { name: tc.function.name, args };
+      const id = tc.id || `or_${Date.now()}_${i}_${tc.function.name}`;
+      tc.id = id;
+      return { id, name: tc.function.name, args };
     });
 
-    return { text: fullText, toolCalls, _rawToolCalls: rawToolCalls };
+    return { text: fullText, toolCalls, _rawToolCalls: rawToolCalls, usage };
   }
 
   // ── Utility ────────────────────────────────────────────────────────────────

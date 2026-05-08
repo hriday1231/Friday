@@ -42,9 +42,9 @@ async function handler(args) {
 
   // If input is a URL/domain, normalize it.
   // Otherwise (e.g. "YT"), only allow it if it resolves via bookmarks/aliases.
-  let targetUrl;
+  let candidate;
   if (SettingsStore._looksLikeUrl(url)) {
-    targetUrl = SettingsStore.normalizeUrl(url);
+    candidate = url;
   } else {
     const resolved = SettingsStore.resolveUrlFromName(url);
     if (!resolved) {
@@ -52,12 +52,13 @@ async function handler(args) {
         `\"${url}\" does not look like a URL. Please add it as a bookmark or alias in Settings.`
       );
     }
-    targetUrl = SettingsStore.normalizeUrl(resolved);
+    candidate = resolved;
   }
 
-  if (!targetUrl) {
-    throw new Error(`Could not resolve a URL from "${url}". Please add it as a bookmark or alias in Settings.`);
-  }
+  // Enforce http(s) and reject flag-style values before any spawn / openExternal.
+  let targetUrl;
+  try { targetUrl = SettingsStore.safeHttpUrl(candidate); }
+  catch (err) { throw new Error(err.message); }
 
   const browserType = normalizeBrowser(browser);
 

@@ -42,21 +42,25 @@ class ToolRegistry {
   }
 
   /**
-   * Get all tools as Gemini FunctionDeclaration format
-   * Deduplicates: built-in tools take precedence over MCP tools with the same name
+   * Get all tools as Gemini FunctionDeclaration format.
+   * Deduplicates: built-in tools take precedence over MCP tools with the same name.
+   * @param {Set<string>|null} [excludeTools] — names to omit (incognito tool gating).
    */
-  getGeminiFunctionDeclarations() {
+  getGeminiFunctionDeclarations(excludeTools = null) {
     const declarations = [];
     const seenNames = new Set();
+    const excludes = excludeTools && excludeTools.size ? excludeTools : null;
 
     // Add built-in tools first (they take precedence)
     for (const [, { declaration }] of this.builtinTools) {
+      if (excludes && excludes.has(declaration.name)) continue;
       declarations.push(this.toGeminiDeclaration(declaration));
       seenNames.add(declaration.name);
     }
 
     // Add MCP tools, skipping any that conflict with built-in tools
     for (const [, { declaration }] of this.mcpTools) {
+      if (excludes && excludes.has(declaration.name)) continue;
       if (!seenNames.has(declaration.name)) {
         declarations.push(this.mcpToGeminiDeclaration(declaration));
         seenNames.add(declaration.name);
@@ -139,11 +143,12 @@ class ToolRegistry {
    * @param {string}          name       - tool name
    * @param {object}          args       - tool arguments
    * @param {Function|null}   [onStream] - optional streaming callback
+   * @param {AbortSignal|null} [signal]  - abort signal forwarded to the handler
    */
-  async executeTool(name, args = {}, onStream) {
+  async executeTool(name, args = {}, onStream, signal = null) {
     if (this.builtinTools.has(name)) {
       const { handler } = this.builtinTools.get(name);
-      const result = await handler(args, onStream);
+      const result = await handler(args, onStream, signal);
       return typeof result === 'string' ? result : JSON.stringify(result);
     }
 
@@ -172,17 +177,21 @@ class ToolRegistry {
   }
 
   /**
-   * Get tools in Ollama API format for tool calling
+   * Get tools in Ollama API format for tool calling.
+   * @param {Set<string>|null} [excludeTools] — names to omit (incognito tool gating).
    */
-  getOllamaTools() {
+  getOllamaTools(excludeTools = null) {
     const tools = [];
     const seenNames = new Set();
+    const excludes = excludeTools && excludeTools.size ? excludeTools : null;
 
     for (const [, { declaration }] of this.builtinTools) {
+      if (excludes && excludes.has(declaration.name)) continue;
       tools.push(this.toOllamaDeclaration(declaration));
       seenNames.add(declaration.name);
     }
     for (const [, { declaration }] of this.mcpTools) {
+      if (excludes && excludes.has(declaration.name)) continue;
       if (!seenNames.has(declaration.name)) {
         tools.push(this.mcpToOllamaDeclaration(declaration));
         seenNames.add(declaration.name);

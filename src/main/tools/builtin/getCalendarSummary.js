@@ -128,8 +128,20 @@ function formatEvent(e, mode) {
     dateTimeStr = `${startStr} – ${endStr}`;
   }
 
-  let out = `- ${e.title} (${dateTimeStr}) [id: ${e.id}]`;
-  if (e.description) out += ` — ${e.description}`;
+  // Truncate event titles and descriptions and strip control chars — calendar
+  // invites are an external trust boundary (anyone who shares an event with the
+  // user can land arbitrary text here).
+  const safeTitle = String(e.title || '(untitled)')
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '')
+    .slice(0, 120);
+  let out = `- ${safeTitle} (${dateTimeStr}) [id: ${e.id}]`;
+  if (e.description) {
+    const safeDesc = String(e.description)
+      .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .slice(0, 200);
+    out += ` — ${safeDesc}`;
+  }
   return out;
 }
 

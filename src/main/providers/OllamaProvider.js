@@ -41,10 +41,20 @@ class OllamaProvider extends BaseProvider {
   }
 
   appendToolResults(messages, results) {
+    // Recent Ollama versions expect `name` on tool messages (some accept either
+    // `name` or `tool_name`); send both for compatibility.
     for (const r of results) {
-      messages.push({ role: 'tool', tool_name: r.name, content: String(r.result) });
+      messages.push({
+        role:      'tool',
+        name:      r.name,
+        tool_name: r.name,
+        content:   String(r.result),
+      });
     }
   }
+
+  /** Cheap local model for background summarisation/memory extraction. */
+  getCheapModel() { return 'llama3.2:3b'; }
 
   /**
    * Send messages to Ollama and stream back any text.
@@ -56,10 +66,8 @@ class OllamaProvider extends BaseProvider {
   // _temperature inherited from BaseProvider
 
   async chatWithTools(messages, modelName, onChunk, signal, appMode = 'chat', opts = {}) {
-    const allTools = this.toolRegistry.getOllamaTools();
-    const tools = (opts && opts.excludeTools && opts.excludeTools.size)
-      ? allTools.filter(t => !opts.excludeTools.has(t.function?.name))
-      : allTools;
+    const excludeTools = opts && opts.excludeTools;
+    const tools = this.toolRegistry.getOllamaTools(excludeTools);
     const baseURL = OllamaService.baseURL;
 
     let response;
@@ -139,13 +147,15 @@ class OllamaProvider extends BaseProvider {
       } catch {}
     }
 
-    const toolCalls = rawToolCalls.map(tc => {
+    const toolCalls = rawToolCalls.map((tc, i) => {
       const fn = tc.function || {};
       let args = fn.arguments;
       if (typeof args === 'string') {
         try { args = args.trim() ? JSON.parse(args) : {}; } catch { args = {}; }
       }
-      return { name: fn.name, args: args || {} };
+      // Ollama doesn't surface a stable id — synthesise one per call.
+      const id = tc.id || `ollama_${Date.now()}_${i}_${fn.name}`;
+      return { id, name: fn.name, args: args || {} };
     });
 
     return { text: fullText, toolCalls, _rawToolCalls: rawToolCalls, usage: tokenUsage };

@@ -47,7 +47,8 @@ class PersistentStore {
       this._db = new SQL.Database();
     }
 
-    this._db.run('PRAGMA journal_mode = WAL;');
+    // Note: journal_mode = WAL is a no-op for sql.js (no real VFS). The whole
+    // DB is exported and rewritten on every flush, so journaling has no effect.
     this._db.run('PRAGMA foreign_keys = ON;');
     this._runMigrations();
 
@@ -134,13 +135,27 @@ class PersistentStore {
         ON sessions(updated_at);
     `);
     // Migrations for existing DBs
-    try { this._db.run(`ALTER TABLE memory    ADD COLUMN category  TEXT DEFAULT 'fact'`); } catch {}
-    try { this._db.run(`ALTER TABLE memory    ADD COLUMN mode      TEXT DEFAULT 'any'`);  } catch {}
-    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN mode      TEXT DEFAULT 'chat'`); } catch {}
-    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN workspace TEXT`);               } catch {}
-    try { this._db.run(`ALTER TABLE messages  ADD COLUMN parts     TEXT`);               } catch {}
-    try { this._db.run(`ALTER TABLE messages  ADD COLUMN usage     TEXT`);               } catch {}
-    try { this._db.run(`ALTER TABLE messages  ADD COLUMN display   TEXT`);               } catch {}
+    try { this._db.run(`ALTER TABLE memory    ADD COLUMN category         TEXT DEFAULT 'fact'`); } catch {}
+    try { this._db.run(`ALTER TABLE memory    ADD COLUMN mode             TEXT DEFAULT 'any'`);  } catch {}
+    try { this._db.run(`ALTER TABLE memory    ADD COLUMN embedding_model  TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE memory    ADD COLUMN embedding_dim    INTEGER`);             } catch {}
+    try { this._db.run(`ALTER TABLE feedback  ADD COLUMN embedding_model  TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE feedback  ADD COLUMN embedding_dim    INTEGER`);             } catch {}
+    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN mode             TEXT DEFAULT 'chat'`); } catch {}
+    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN workspace        TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN episode_model    TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE sessions  ADD COLUMN episode_dim      INTEGER`);             } catch {}
+    try { this._db.run(`ALTER TABLE messages  ADD COLUMN parts            TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE messages  ADD COLUMN usage            TEXT`);                } catch {}
+    try { this._db.run(`ALTER TABLE messages  ADD COLUMN display          TEXT`);                } catch {}
+
+    // Mode-aware indexes (sidebar listing + memory mode filter + feedback by app_mode).
+    try { this._db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_mode_updated
+                         ON sessions(mode, pinned, updated_at)`);                                } catch {}
+    try { this._db.run(`CREATE INDEX IF NOT EXISTS idx_memory_mode ON memory(mode)`);            } catch {}
+    try { this._db.run(`CREATE INDEX IF NOT EXISTS idx_feedback_rating_mode
+                         ON feedback(rating, app_mode, created_at)`);                            } catch {}
+
     this._scheduleSave();
   }
 
@@ -235,8 +250,25 @@ class PersistentStore {
   _flushNow() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
     if (!this._db) return;
+    // Atomic write: serialize to a temp file in the same directory, fsync, then
+    // rename over the live DB. Prevents torn-write corruption on hard kill /
+    // OS shutdown / power loss. rename() is atomic on the same filesystem on
+    // both Windows (since Vista) and POSIX.
     const data = this._db.export();
-    fs.writeFileSync(this._dbPath, Buffer.from(data));
+    const tmp  = this._dbPath + '.tmp';
+    let fd;
+    try {
+      fd = fs.openSync(tmp, 'w');
+      fs.writeSync(fd, Buffer.from(data));
+      try { fs.fsyncSync(fd); } catch {}
+      fs.closeSync(fd); fd = null;
+      fs.renameSync(tmp, this._dbPath);
+    } catch (err) {
+      if (fd != null) { try { fs.closeSync(fd); } catch {} }
+      try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+      console.error('[PersistentStore] flush failed:', err.message);
+      throw err;
+    }
   }
 
   // ─── Query helpers ─────────────────────────────────────────────────────────
@@ -364,13 +396,24 @@ class PersistentStore {
     const img = images && images.length > 0
       ? JSON.stringify(images.map(i => ({ data: i.data, mimeType: i.mimeType, name: i.name || '' })))
       : null;
+    // Defensive JSON encode: a circular reference in `parts` would otherwise
+    // throw and abort the assistant insert *after* the user message had already
+    // been written, leaving an orphan turn.
+    let partsJson = null;
+    if (parts) {
+      try { partsJson = JSON.stringify(parts); }
+      catch (err) { console.error('[PersistentStore] addMessage: parts not JSON-serialisable, dropping:', err.message); }
+    }
+    let usageJson = null;
+    if (usage) {
+      try { usageJson = JSON.stringify(usage); } catch {}
+    }
     this._run(
       `INSERT INTO messages (id, session_id, role, content, parts, usage, display, type, images, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [
         id, sessionId, role, content,
-        parts   ? JSON.stringify(parts)  : null,
-        usage   ? JSON.stringify(usage)  : null,
+        partsJson, usageJson,
         display ?? null,
         type, img, now,
       ]
@@ -528,10 +571,14 @@ class PersistentStore {
       [id, content, source, category, mode, now, now, now]
     );
 
-    // Background embedding
+    // Background embedding — record the model name + dim alongside so we can
+    // detect mismatches if the embedding model is later swapped.
     memoryEmbedder.embed(content).then(emb => {
-      if (emb) {
-        this._run(`UPDATE memory SET embedding = ? WHERE id = ?`, [JSON.stringify(emb), id]);
+      if (emb && Array.isArray(emb)) {
+        this._run(
+          `UPDATE memory SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`,
+          [JSON.stringify(emb), memoryEmbedder.modelName, emb.length, id]
+        );
       }
     }).catch(() => {});
 
@@ -558,12 +605,24 @@ class PersistentStore {
     try {
       const queryEmb = await memoryEmbedder.embed(query);
       if (!queryEmb) return all.slice(0, topK).map(strip);
+      const queryDim = queryEmb.length;
+      const queryModel = memoryEmbedder.modelName;
 
-      // Backfill missing embeddings — fire-and-forget so retrieval isn't blocked
+      // Backfill missing embeddings AND re-embed any rows whose stored vector
+      // is from a different model / dimensionality than the current one
+      // (otherwise cosine() would silently score them at 0).
       for (const m of all) {
-        if (!m.embedding) {
+        const stale = !m.embedding
+          || (m.embedding_model && m.embedding_model !== queryModel)
+          || (m.embedding_dim   && m.embedding_dim   !== queryDim);
+        if (stale) {
           memoryEmbedder.embed(m.content).then(emb => {
-            if (emb) this._run(`UPDATE memory SET embedding = ? WHERE id = ?`, [JSON.stringify(emb), m.id]);
+            if (emb && Array.isArray(emb)) {
+              this._run(
+                `UPDATE memory SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`,
+                [JSON.stringify(emb), queryModel, emb.length, m.id]
+              );
+            }
           }).catch(() => {});
         }
       }
@@ -576,8 +635,14 @@ class PersistentStore {
       const CATEGORY_BOOST = { preference: 0.25, procedural: 0.30, project: 0.10, entity: 0.05, fact: 0 };
 
       const scored = all.map(m => {
-        const emb      = m.embedding ? JSON.parse(m.embedding) : null;
-        const cosScore = emb ? memoryEmbedder.cosine(queryEmb, emb) : 0;
+        let emb = null;
+        if (m.embedding) {
+          try { emb = JSON.parse(m.embedding); } catch { emb = null; }
+        }
+        // Skip cosine when stored vector is from a different model — its cosine
+        // against queryEmb would be NaN-cascade-to-zero and noise-ranked.
+        const usable   = emb && Array.isArray(emb) && emb.length === queryDim;
+        const cosScore = usable ? memoryEmbedder.cosine(queryEmb, emb) : 0;
         const ageDays  = (now - (m.last_reinforced || m.created_at || now)) / MS_PER_DAY;
         const decay    = Math.exp(-LAMBDA * ageDays);
         const boost    = CATEGORY_BOOST[m.category] || 0;
@@ -609,9 +674,19 @@ class PersistentStore {
 
   updateMemory(id, content) {
     const now = Date.now();
-    this._run(`UPDATE memory SET content = ?, updated_at = ?, embedding = NULL WHERE id = ?`, [content, now, id]);
+    this._run(
+      `UPDATE memory SET content = ?, updated_at = ?, embedding = NULL,
+                         embedding_model = NULL, embedding_dim = NULL
+        WHERE id = ?`,
+      [content, now, id]
+    );
     memoryEmbedder.embed(content).then(emb => {
-      if (emb) this._run(`UPDATE memory SET embedding = ? WHERE id = ?`, [JSON.stringify(emb), id]);
+      if (emb && Array.isArray(emb)) {
+        this._run(
+          `UPDATE memory SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`,
+          [JSON.stringify(emb), memoryEmbedder.modelName, emb.length, id]
+        );
+      }
     }).catch(() => {});
   }
 
@@ -622,6 +697,8 @@ class PersistentStore {
 
   clearAllMemory() {
     this._run(`DELETE FROM memory`);
+    // Reclaim the freed pages so the on-disk file actually shrinks.
+    try { this._db.run(`VACUUM`); } catch {}
     this._flushNow();
   }
 
@@ -681,11 +758,11 @@ class PersistentStore {
     const embedText   = (titlePart + contentPart).slice(0, 600);
 
     const embedding = await memoryEmbedder.embed(embedText);
-    if (!embedding) return;
+    if (!embedding || !Array.isArray(embedding)) return;
 
     this._run(
-      `UPDATE sessions SET episode_digest = ?, episode_embedding = ? WHERE id = ?`,
-      [contentPart.slice(0, 200), JSON.stringify(embedding), sessionId]
+      `UPDATE sessions SET episode_digest = ?, episode_embedding = ?, episode_model = ?, episode_dim = ? WHERE id = ?`,
+      [contentPart.slice(0, 200), JSON.stringify(embedding), memoryEmbedder.modelName, embedding.length, sessionId]
     );
   }
 
@@ -695,7 +772,7 @@ class PersistentStore {
     // Check rows first — avoids a ~3s embedder round-trip when there are no
     // episodes to compare against (common for fresh installs).
     const rows = this._all(
-      `SELECT id, title, updated_at, episode_digest, episode_embedding
+      `SELECT id, title, updated_at, episode_digest, episode_embedding, episode_model, episode_dim
        FROM sessions
        WHERE id != ? AND title IS NOT NULL AND episode_embedding IS NOT NULL`,
       [currentSessionId]
@@ -704,14 +781,22 @@ class PersistentStore {
 
     const queryEmb = await memoryEmbedder.embed(query);
     if (!queryEmb) return [];
+    const queryDim = queryEmb.length;
+    const queryModel = memoryEmbedder.modelName;
 
     return rows
-      .map(s => ({
-        title:      s.title,
-        updated_at: s.updated_at,
-        digest:     s.episode_digest || s.title,
-        score:      memoryEmbedder.cosine(queryEmb, JSON.parse(s.episode_embedding)),
-      }))
+      .map(s => {
+        let emb = null;
+        try { emb = JSON.parse(s.episode_embedding); } catch { emb = null; }
+        const usable = emb && Array.isArray(emb) && emb.length === queryDim
+          && (!s.episode_model || s.episode_model === queryModel);
+        return {
+          title:      s.title,
+          updated_at: s.updated_at,
+          digest:     s.episode_digest || s.title,
+          score:      usable ? memoryEmbedder.cosine(queryEmb, emb) : 0,
+        };
+      })
       .filter(e => e.score >= MIN_SCORE)
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
@@ -758,7 +843,12 @@ class PersistentStore {
     // Backfill embedding for thumbs-up exchanges so they can be retrieved semantically
     if (rating === 1) {
       memoryEmbedder.embed(userMessage).then(emb => {
-        if (emb) this._run(`UPDATE feedback SET embedding = ? WHERE id = ?`, [JSON.stringify(emb), id]);
+        if (emb && Array.isArray(emb)) {
+          this._run(
+            `UPDATE feedback SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`,
+            [JSON.stringify(emb), memoryEmbedder.modelName, emb.length, id]
+          );
+        }
       }).catch(() => {});
     }
     this._scheduleSave();
@@ -795,19 +885,33 @@ class PersistentStore {
     try {
       const queryEmb = await memoryEmbedder.embed(query);
       if (!queryEmb) return candidates.slice(0, topK).map(({ embedding, ...rest }) => rest); // eslint-disable-line no-unused-vars
+      const queryDim = queryEmb.length;
+      const queryModel = memoryEmbedder.modelName;
 
-      // Backfill missing embeddings
+      // Backfill missing or model-mismatched embeddings
       for (const row of candidates) {
-        if (!row.embedding) {
+        const stale = !row.embedding
+          || (row.embedding_model && row.embedding_model !== queryModel)
+          || (row.embedding_dim   && row.embedding_dim   !== queryDim);
+        if (stale) {
           memoryEmbedder.embed(row.user_message).then(emb => {
-            if (emb) this._run(`UPDATE feedback SET embedding = ? WHERE id = ?`, [JSON.stringify(emb), row.id]);
+            if (emb && Array.isArray(emb)) {
+              this._run(
+                `UPDATE feedback SET embedding = ?, embedding_model = ?, embedding_dim = ? WHERE id = ?`,
+                [JSON.stringify(emb), queryModel, emb.length, row.id]
+              );
+            }
           }).catch(() => {});
         }
       }
 
       const scored = candidates.map(row => {
-        const emb   = row.embedding ? JSON.parse(row.embedding) : null;
-        const score = emb ? memoryEmbedder.cosine(queryEmb, emb) : 0;
+        let emb = null;
+        if (row.embedding) {
+          try { emb = JSON.parse(row.embedding); } catch { emb = null; }
+        }
+        const usable = emb && Array.isArray(emb) && emb.length === queryDim;
+        const score  = usable ? memoryEmbedder.cosine(queryEmb, emb) : 0;
         return { row, score };
       });
 

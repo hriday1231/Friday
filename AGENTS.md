@@ -15,8 +15,7 @@ src/main/          — Node.js / Electron main process
   agents/
     AgentRuntime.js     — Event-driven tool-use loop (single chat entry point)
     SessionContext.js   — Per-session abort + permission + cost tracker
-    PermissionManager.js — Policy object (used with fullyOpen() — all tools allowed)
-    CompactionManager.js — Long-context message compaction
+    PermissionManager.js — Policy object; main.js uses forChat() (READ_ONLY) so destructive tools prompt
     CostTracker.js       — Token usage tracker
   providers/
     OllamaProvider.js, GroqProvider.js, GeminiProvider.js, OpenRouterProvider.js
