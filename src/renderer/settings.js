@@ -168,21 +168,6 @@ async function loadIntegrationsPage() {
     if (el && res?.hotkey) el.value = res.hotkey;
   } catch {}
 
-  await loadScreenContextCard();
-}
-
-async function loadScreenContextCard() {
-  try {
-    const cfg = await window.electronAPI?.getScreenContextConfig?.();
-    if (cfg) {
-      const enabled  = $('screenContextEnabled');
-      const interval = $('screenContextInterval');
-      if (enabled)  enabled.checked  = !!cfg.enabled;
-      if (interval) interval.value   = cfg.interval || 60;
-    }
-    const badge = $('badge-screen-context');
-    if (badge) setBadge(badge, cfg?.enabled ? 'ok' : 'warn', cfg?.enabled ? 'Active' : 'Off');
-  } catch {}
 }
 
 function wireEvents() {
@@ -248,20 +233,6 @@ function wireIntegrationsPage() {
     const res = await window.electronAPI?.saveHotkey?.(hotkey);
     if (res?.success) showToast(`Hotkey set to ${hotkey}`, 'ok');
     else showToast(res?.error || 'Failed to set hotkey — check the accelerator syntax', 'err');
-  });
-
-  $('saveScreenContextBtn')?.addEventListener('click', async () => {
-    const cfg = {
-      enabled:  !!$('screenContextEnabled')?.checked,
-      interval: parseInt($('screenContextInterval')?.value || '60', 10),
-    };
-    const res = await window.electronAPI?.saveScreenContextConfig?.(cfg);
-    if (res?.success) {
-      showToast(cfg.enabled ? 'Screen context enabled' : 'Screen context disabled', 'ok');
-      await loadScreenContextCard();
-    } else {
-      showToast(res?.error || 'Failed to save screen context config', 'err');
-    }
   });
 
   $('saveWakeWordBtn')?.addEventListener('click', async () => {

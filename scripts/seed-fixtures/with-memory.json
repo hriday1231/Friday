@@ -1,0 +1,19 @@
+{
+  "_description": "Pre-seeded long-term memory facts. Used by tests that verify memory recall across session boundaries.",
+  "sessions": [],
+  "messages": [],
+  "memory": [
+    { "content": "User's favorite color is blue.",                        "category": "fact",       "mode": "any" },
+    { "content": "User prefers concise answers without restating the question.", "category": "preference", "mode": "any" },
+    { "content": "User is testing Friday's UI from a browser via the web bridge.", "category": "context", "mode": "any" }
+  ],
+  "feedback": [],
+  "settings": {
+    "modelSlots": {
+      "chat":   { "model": "gpt-oss:20b", "type": "ollama" },
+      "vision": { "model": "llama3.2-vision:11b", "type": "ollama" },
+      "cloud":  { "model": "gpt-oss:20b", "type": "ollama" }
+    },
+    "ollamaBaseUrl": "http://localhost:11434"
+  }
+}

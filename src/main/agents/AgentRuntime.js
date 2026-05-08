@@ -187,7 +187,7 @@ class AgentRuntime {
     const messages = provider.initMessages(
       memoryEntries, summary, episodes,
       context.agent ?? null, null,
-      appMode, fewShots, null
+      appMode, fewShots
     );
     for (const turn of history) {
       provider.appendUser(messages, turn.user);
@@ -405,7 +405,7 @@ class AgentRuntime {
 
     const provider  = this._providerManager._route(modelName);
     const summary   = this._store?.getSessionSummary(sessionId)?.text ?? null;
-    const messages  = provider.initMessages(memoryEntries, summary, episodes, context.agent, null, appMode, [], null);
+    const messages  = provider.initMessages(memoryEntries, summary, episodes, context.agent, null, appMode, []);
     provider.appendUser(messages, summaryPrompt, images);
 
     let textContent = '';

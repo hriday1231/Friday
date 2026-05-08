@@ -50,9 +50,8 @@ function getUtcOffsetString(timeZone, now) {
  * @param {string|null}                                       _unused1        – reserved
  * @param {string}                                            _unused2        – reserved
  * @param {Array<{user_message,assistant_response}>}          fewShots       – approved example exchanges
- * @param {string|null}                                       screenContext  – recent screen description (opt-in)
  */
-function buildSystemPrompt(memoryEntries = [], contextSummary = null, episodes = [], agent = null, _unused1 = null, _unused2 = 'chat', fewShots = [], screenContext = null) {
+function buildSystemPrompt(memoryEntries = [], contextSummary = null, episodes = [], agent = null, _unused1 = null, _unused2 = 'chat', fewShots = []) {
   const timezone = process.env.CALENDAR_TIMEZONE || 'America/Los_Angeles';
   const now = new Date();
 
@@ -91,14 +90,10 @@ function buildSystemPrompt(memoryEntries = [], contextSummary = null, episodes =
       ).join('\n\n')
     : '';
 
-  const screenBlock  = screenContext
-    ? `\n\nCurrent screen context (opt-in ambient view):\n${screenContext}`
-    : '';
-
   const year      = now.toLocaleDateString('en-US', { timeZone: timezone, year: 'numeric' }).slice(-4);
   const agentName = agent?.name || 'Friday';
 
-  return `You are ${agentName}, a fast personal chat assistant.${memoryBlock}${episodeBlock}${summaryBlock}${fewShotBlock}${screenBlock}${agentBlock}${customBlock}
+  return `You are ${agentName}, a fast personal chat assistant.${memoryBlock}${episodeBlock}${summaryBlock}${fewShotBlock}${agentBlock}${customBlock}
 Date/time: ${dateStr}, ${timeStr} (${timezone}, UTC${offsetStr})
 
 Tools — pick the right one:

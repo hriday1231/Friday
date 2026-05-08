@@ -1,0 +1,26 @@
+{
+  "_description": "Three sessions with prior turns. Used by tests that verify session-list rendering, switching, and search.",
+  "sessions": [
+    { "id": "fixture-session-1", "title": "Quick math",          "mode": "chat", "created_at": 1730000000000, "updated_at": 1730000060000, "pinned": false },
+    { "id": "fixture-session-2", "title": "Web search test",     "mode": "chat", "created_at": 1730000100000, "updated_at": 1730000180000, "pinned": true  },
+    { "id": "fixture-session-3", "title": "Refactor brainstorm", "mode": "chat", "created_at": 1730000200000, "updated_at": 1730000300000, "pinned": false }
+  ],
+  "messages": [
+    { "id": "fixture-msg-1-u", "session_id": "fixture-session-1", "role": "user",      "content": "what is 2+2?",                       "created_at": 1730000010000 },
+    { "id": "fixture-msg-1-a", "session_id": "fixture-session-1", "role": "assistant", "content": "4.",                                  "created_at": 1730000020000 },
+    { "id": "fixture-msg-2-u", "session_id": "fixture-session-2", "role": "user",      "content": "search the web for OpenAI",           "created_at": 1730000110000 },
+    { "id": "fixture-msg-2-a", "session_id": "fixture-session-2", "role": "assistant", "content": "Here are the latest results...",     "created_at": 1730000130000 },
+    { "id": "fixture-msg-3-u", "session_id": "fixture-session-3", "role": "user",      "content": "how would you split this module?",   "created_at": 1730000210000 },
+    { "id": "fixture-msg-3-a", "session_id": "fixture-session-3", "role": "assistant", "content": "I'd extract A, B, and C because...", "created_at": 1730000220000 }
+  ],
+  "memory": [],
+  "feedback": [],
+  "settings": {
+    "modelSlots": {
+      "chat":   { "model": "gpt-oss:20b", "type": "ollama" },
+      "vision": { "model": "llama3.2-vision:11b", "type": "ollama" },
+      "cloud":  { "model": "gpt-oss:20b", "type": "ollama" }
+    },
+    "ollamaBaseUrl": "http://localhost:11434"
+  }
+}
