@@ -371,13 +371,16 @@ function wireModelsPage() {
     const key = $('groqApiKeyInput')?.value?.trim() || '';
     if (!key) { showToast('Enter a Groq API key first', 'warn'); return; }
     showToast('Testing Groq…', 'info');
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/models', {
-        headers: { Authorization: `Bearer ${key}` }
-      });
-      if (res.ok) { showToast('Groq ✓ connected', 'ok'); _setBadge('badge-groq', key); }
-      else showToast(`Groq error ${res.status}`, 'err');
-    } catch (e) { showToast(`Groq failed: ${e.message}`, 'err'); }
+    // Persist the key so the main-process service uses it, then test via IPC
+    // (browser fetch to api.groq.com is blocked by CORS).
+    await window.electronAPI?.saveGroqKey?.(key);
+    const res = await window.electronAPI?.testIntegration?.('groq');
+    if (res?.success) {
+      showToast(`Groq ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      _setBadge('badge-groq', key);
+    } else {
+      showToast(`Groq failed: ${res?.error || 'unknown error'}`, 'err');
+    }
   });
 
   // Gemini
@@ -391,13 +394,14 @@ function wireModelsPage() {
     const key = $('geminiApiKeyInput')?.value?.trim() || '';
     if (!key) { showToast('Enter a Gemini API key first', 'warn'); return; }
     showToast('Testing Gemini…', 'info');
-    try {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1`
-      );
-      if (res.ok) { showToast('Gemini ✓ connected', 'ok'); _setBadge('badge-gemini-models', key); }
-      else showToast(`Gemini error ${res.status}`, 'err');
-    } catch (e) { showToast(`Gemini failed: ${e.message}`, 'err'); }
+    await window.electronAPI?.saveGeminiKey?.(key);
+    const res = await window.electronAPI?.testIntegration?.('gemini');
+    if (res?.success) {
+      showToast(`Gemini ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      _setBadge('badge-gemini-models', key);
+    } else {
+      showToast(`Gemini failed: ${res?.error || 'unknown error'}`, 'err');
+    }
   });
 
   // Brave Search
@@ -411,13 +415,14 @@ function wireModelsPage() {
     const key = $('braveApiKeyInput')?.value?.trim() || '';
     if (!key) { showToast('Enter a Brave API key first', 'warn'); return; }
     showToast('Testing Brave Search…', 'info');
-    try {
-      const res = await fetch('https://api.search.brave.com/res/v1/web/search?q=test&count=1', {
-        headers: { 'Accept': 'application/json', 'X-Subscription-Token': key }
-      });
-      if (res.ok) { showToast('Brave Search ✓ connected', 'ok'); _setBadge('badge-brave-models', key); }
-      else showToast(`Brave error ${res.status}`, 'err');
-    } catch (e) { showToast(`Brave failed: ${e.message}`, 'err'); }
+    await window.electronAPI?.saveBraveKey?.(key);
+    const res = await window.electronAPI?.testIntegration?.('brave');
+    if (res?.success) {
+      showToast(`Brave ✓ — ${res.details?.resultCount ?? 0} results`, 'ok');
+      _setBadge('badge-brave-models', key);
+    } else {
+      showToast(`Brave failed: ${res?.error || 'unknown error'}`, 'err');
+    }
   });
 
   // OpenRouter
@@ -432,19 +437,14 @@ function wireModelsPage() {
     const key = $('openrouterApiKeyInput')?.value?.trim() || '';
     if (!key) { showToast('Enter an OpenRouter API key first', 'warn'); return; }
     showToast('Testing OpenRouter…', 'info');
-    try {
-      const res = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { Authorization: `Bearer ${key}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const count = data?.data?.length || 0;
-        showToast(`OpenRouter ✓ — ${count} models available`, 'ok');
-        _setBadge('badge-openrouter', key);
-      } else {
-        showToast(`OpenRouter error ${res.status}`, 'err');
-      }
-    } catch (e) { showToast(`OpenRouter failed: ${e.message}`, 'err'); }
+    await window.electronAPI?.saveOpenRouterKey?.(key);
+    const res = await window.electronAPI?.testIntegration?.('openrouter');
+    if (res?.success) {
+      showToast(`OpenRouter ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      _setBadge('badge-openrouter', key);
+    } else {
+      showToast(`OpenRouter failed: ${res?.error || 'unknown error'}`, 'err');
+    }
   });
 
   $('saveModelSlotsBtn')?.addEventListener('click', async () => {

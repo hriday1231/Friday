@@ -769,6 +769,14 @@ register('test-integration', async (event, { name } = {}) => {
       const models = await GeminiService.fetchModels();
       return { success: true, details: { modelCount: models.length } };
     }
+    if (n === 'groq') {
+      const models = await GroqService.fetchModels();
+      return { success: true, details: { modelCount: models.length } };
+    }
+    if (n === 'openrouter') {
+      const models = await OpenRouterService.fetchModels();
+      return { success: true, details: { modelCount: models.length } };
+    }
     if (n === 'brave') {
       const res = await BraveSearchService.search('friday assistant');
       return { success: true, details: { resultCount: res?.web?.results?.length ?? 0 } };
