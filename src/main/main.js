@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, shell, dialog, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -48,10 +48,56 @@ let activeSessionId   = null;
 let currentModel      = null;
 let currentModelType  = null;
 let geminiProvider, ollamaProvider, groqProvider, openRouterProvider;
-let _screenContext      = null;
-let _screenContextTimer = null;
 /** @type {Map<string, SessionContext>} */
 const _sessionContexts = new Map();
+
+// ─── CLI flag parsing ─────────────────────────────────────────────────────────
+// Opt-in dev/test web bridge. None of these flags are set by `npm start`.
+const argv = process.argv.slice(1);
+function _argFlag(name) { return argv.includes(`--${name}`); }
+function _argValue(name, fallback) {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
+}
+const CLI = {
+  web:        _argFlag('web') || _argFlag('web-only'),
+  webOnly:    _argFlag('web-only'),
+  localOnly:  _argFlag('local-only'),
+  resetState: _argFlag('reset-state'),
+  seedPath:   _argValue('seed', null),
+  testModel:  _argValue('test-model', process.env.FRIDAY_TEST_MODEL || null),
+  webPort:    parseInt(process.env.WEB_PORT || _argValue('web-port', '4173'), 10) || 4173,
+  webHost:    process.env.WEB_HOST || _argValue('web-host', '127.0.0.1'),
+};
+if (CLI.web && CLI.webHost !== '127.0.0.1' && CLI.webHost !== 'localhost') {
+  console.error(`[webBridge] Refusing to bind to non-loopback address: ${CLI.webHost}`);
+  console.error('[webBridge] The bridge has full host privileges and must never be exposed beyond loopback.');
+  process.exit(1);
+}
+
+// ─── IPC handler registry ─────────────────────────────────────────────────────
+// Every handler is registered via register(channel, fn) so it's reachable from
+// both Electron IPC and the optional HTTP bridge.
+/** @type {Object<string, (...args: any[]) => any>} */
+const ipcHandlers = {};
+function register(channel, fn) {
+  // Bridge invokes handlers with raw arg list; we synthesize an empty event object.
+  // Multi-arg handlers like transcribe-audio(audioData, mimeType) work transparently.
+  ipcHandlers[channel] = (...args) => fn({}, ...args);
+  ipcMain.handle(channel, fn);
+}
+
+// ─── Push-event fan-out ───────────────────────────────────────────────────────
+// One-way main→renderer events are mirrored to any registered broadcaster
+// (used by the web bridge to forward via WebSocket).
+const _broadcasters = new Set();
+function registerBroadcaster(fn) { _broadcasters.add(fn); return () => _broadcasters.delete(fn); }
+function pushEvent(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
+  for (const fn of _broadcasters) {
+    try { fn(channel, data); } catch (e) { console.error('[pushEvent] broadcaster threw:', e.message); }
+  }
+}
 
 function _iconPath() {
   const base = path.join(__dirname, '../../public');
@@ -175,12 +221,38 @@ function registerBuiltinTools(registry) {
 }
 
 app.whenReady().then(async () => {
-  createWindow();
-  setupTray(mainWindow);
+  // ── Electron desktop window (skipped in --web-only) ─────────────────────────
+  if (!CLI.webOnly) {
+    createWindow();
+    setupTray(mainWindow);
+  } else {
+    console.log('[main] --web-only: skipping Electron window and tray.');
+  }
 
-  // ── Store init ──────────────────────────────────────────────────────────────
+  // ── Store init (with optional --reset-state / --seed) ───────────────────────
   store = new PersistentStore(app.getPath('userData'));
-  await store.init();
+  if (CLI.resetState) {
+    await store.reset();
+    try { SettingsStore.store.clear(); } catch (e) { console.warn('[main] could not clear SettingsStore:', e.message); }
+    console.log('[main] --reset-state: wiped sessions, messages, memory, settings');
+  } else {
+    await store.init();
+  }
+  if (CLI.seedPath) {
+    try {
+      const result = await store.seedFromFile(path.resolve(CLI.seedPath));
+      console.log(`[main] --seed: loaded ${result.sessions} sessions, ${result.messages} messages, ${result.memory} memory rows from ${CLI.seedPath}`);
+      if (result.settings && typeof result.settings === 'object') {
+        for (const [k, v] of Object.entries(result.settings)) {
+          try { SettingsStore.store.set(k, v); } catch (e) { console.warn(`[main] --seed: could not set ${k}:`, e.message); }
+        }
+        console.log(`[main] --seed: applied ${Object.keys(result.settings).length} settings`);
+      }
+    } catch (err) {
+      console.error(`[main] --seed failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
 
   const _chatSessions = store.listSessions('chat');
   activeSessionId = _chatSessions[0]?.id ?? store.createSession(null, 'chat').id;
@@ -192,52 +264,86 @@ app.whenReady().then(async () => {
   mcpClientManager = new MCPClientManager(toolRegistry);
   await mcpClientManager.connectAll();
 
-  // ── Providers + AgentRuntime ────────────────────────────────────────────────
+  // ── Providers (filtered to local-only when --local-only) ────────────────────
   geminiProvider     = new GeminiProvider(toolRegistry);
   ollamaProvider     = new OllamaProvider(toolRegistry);
   groqProvider       = new GroqProvider(toolRegistry);
   openRouterProvider = new OpenRouterProvider(toolRegistry);
 
-  providerManager = new ProviderManager({
-    gemini:     geminiProvider,
-    ollama:     ollamaProvider,
-    groq:       groqProvider,
-    openrouter: openRouterProvider,
-  });
+  let providerSet;
+  if (CLI.localOnly) {
+    const { ensureLocalReadiness } = require('./testMode');
+    await ensureLocalReadiness({ testModel: CLI.testModel });
+    providerSet = { ollama: ollamaProvider };
+    console.log('[main] --local-only: only Ollama provider active');
+  } else {
+    providerSet = {
+      gemini:     geminiProvider,
+      ollama:     ollamaProvider,
+      groq:       groqProvider,
+      openrouter: openRouterProvider,
+    };
+  }
+  providerManager = new ProviderManager(providerSet);
   providerManager.cacheModelLists().catch(() => {});
 
-  const _emit = (event) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('agent-event', event);
-  };
+  const _emit = (event) => pushEvent('agent-event', event);
 
   agentRuntime = new AgentRuntime({
     toolRegistry,
     providerManager,
     store,
     emit: _emit,
-    getScreenContext: () => _screenContext,
   });
 
-  // ── Screen context ──────────────────────────────────────────────────────────
-  const scCfg = SettingsStore.getScreenContextConfig();
-  if (scCfg.enabled) _startScreenContext(scCfg.interval);
-
-  // ── Hotkey ──────────────────────────────────────────────────────────────────
-  const hotkey = SettingsStore.getHotkey() || process.env.HOTKEY || 'CommandOrControl+Shift+Space';
-  if (!globalShortcut.register(hotkey, () => toggleWindow())) {
-    console.error('Hotkey registration failed');
+  // ── Hotkey (desktop-only) ───────────────────────────────────────────────────
+  if (!CLI.webOnly) {
+    const hotkey = SettingsStore.getHotkey() || process.env.HOTKEY || 'CommandOrControl+Shift+Space';
+    if (!globalShortcut.register(hotkey, () => toggleWindow())) {
+      console.error('Hotkey registration failed');
+    }
   }
 
   // ── Warm up Ollama models list ──────────────────────────────────────────────
   try {
     const models = await OllamaService.fetchModels();
-    if (mainWindow) mainWindow.webContents.send('ollama-models-updated', models);
+    pushEvent('ollama-models-updated', models);
   } catch (error) {
     console.error('Failed to fetch Ollama models:', error);
   }
 
+  // ── Web bridge (opt-in dev/test mode) ───────────────────────────────────────
+  if (CLI.web) {
+    try {
+      const { startWebBridge } = require('./webBridge');
+      await startWebBridge({
+        host: CLI.webHost,
+        port: CLI.webPort,
+        ipcHandlers,
+        registerBroadcaster,
+        onPermissionResponse: ({ requestId, approved, alwaysAllow } = {}) => {
+          if (agentRuntime && requestId) agentRuntime.resolvePermission(requestId, !!approved, !!alwaysAllow);
+        },
+        getStatus: () => ({
+          ready: !!agentRuntime,
+          providers: Object.keys(providerSet),
+          activeSession: activeSessionId,
+          localOnly: CLI.localOnly,
+          testModel: CLI.testModel,
+        }),
+        rendererDir: path.join(__dirname, '../renderer'),
+        nodeModulesDir: path.join(__dirname, '../../node_modules'),
+      });
+      console.log(`[webBridge] Friday web bridge listening on http://${CLI.webHost}:${CLI.webPort}`);
+      console.log(`[webBridge] Open http://${CLI.webHost}:${CLI.webPort}/?web=1 in a browser`);
+    } catch (err) {
+      console.error('[webBridge] Failed to start:', err.message);
+      if (CLI.webOnly) process.exit(1);
+    }
+  }
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!CLI.webOnly && BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
@@ -251,7 +357,6 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  _stopScreenContext();
   // Best-effort MCP shutdown so stdio child processes don't linger.
   try { mcpClientManager?.disconnectAll?.().catch(() => {}); } catch {}
   store?.close();
@@ -259,12 +364,12 @@ app.on('will-quit', () => {
 
 // ─── Session / History IPC ────────────────────────────────────────────────────
 
-ipcMain.handle('get-active-session', () => {
+register('get-active-session', () => {
   if (!store || !activeSessionId) return null;
   return { session: store.getSession(activeSessionId), messages: store.getMessages(activeSessionId) };
 });
 
-ipcMain.handle('new-chat', () => {
+register('new-chat', () => {
   if (!store) return null;
   const session = store.createSession(null, 'chat');
   activeSessionId = session.id;
@@ -272,9 +377,9 @@ ipcMain.handle('new-chat', () => {
   return { session, messages: [] };
 });
 
-ipcMain.handle('get-sessions', () => store?.listSessions() ?? []);
+register('get-sessions', () => store?.listSessions() ?? []);
 
-ipcMain.handle('load-session', (event, { sessionId } = {}) => {
+register('load-session', (event, { sessionId } = {}) => {
   if (!store || !sessionId) return null;
   const session = store.getSession(sessionId);
   if (!session) return null;
@@ -282,19 +387,19 @@ ipcMain.handle('load-session', (event, { sessionId } = {}) => {
   return { session, messages: store.getMessages(sessionId) };
 });
 
-ipcMain.handle('rename-session', (event, { sessionId, title } = {}) => {
+register('rename-session', (event, { sessionId, title } = {}) => {
   if (!store || !sessionId) return { success: false };
   store.renameSession(sessionId, title ?? '');
   return { success: true };
 });
 
-ipcMain.handle('pin-session', (event, { sessionId, pinned } = {}) => {
+register('pin-session', (event, { sessionId, pinned } = {}) => {
   if (!store || !sessionId) return { success: false };
   store.pinSession(sessionId, !!pinned);
   return { success: true };
 });
 
-ipcMain.handle('extract-file-text', async (event, buffer) => {
+register('extract-file-text', async (event, buffer) => {
   try {
     // Cap the buffer to prevent an out-of-memory DoS from a misbehaving
     // renderer. 20MB is comfortably above any reasonable plain-text file.
@@ -307,21 +412,21 @@ ipcMain.handle('extract-file-text', async (event, buffer) => {
   }
 });
 
-ipcMain.handle('search-sessions', (event, { query } = {}) => {
+register('search-sessions', (event, { query } = {}) => {
   if (!store || !query) return [];
   return store.searchMessages(query);
 });
 
-ipcMain.handle('save-document',   (event, { sessionId, doc } = {}) => (store && sessionId && doc) ? store.saveDocument(sessionId, doc) : null);
-ipcMain.handle('get-documents',   (event, { sessionId } = {})      => (store && sessionId) ? store.getDocuments(sessionId) : []);
-ipcMain.handle('delete-document', (event, { id } = {})             => { if (store && id) store.deleteDocument(id); });
+register('save-document',   (event, { sessionId, doc } = {}) => (store && sessionId && doc) ? store.saveDocument(sessionId, doc) : null);
+register('get-documents',   (event, { sessionId } = {})      => (store && sessionId) ? store.getDocuments(sessionId) : []);
+register('delete-document', (event, { id } = {})             => { if (store && id) store.deleteDocument(id); });
 
-ipcMain.handle('truncate-session', (event, { sessionId, fromIndex } = {}) => {
+register('truncate-session', (event, { sessionId, fromIndex } = {}) => {
   if (!store || !sessionId || fromIndex == null) return { success: false };
   return { success: store.truncateMessages(sessionId, fromIndex) };
 });
 
-ipcMain.handle('delete-session', (event, { sessionId } = {}) => {
+register('delete-session', (event, { sessionId } = {}) => {
   if (!store || !sessionId) return { success: false };
   store.deleteSession(sessionId);
   if (sessionId === activeSessionId) {
@@ -331,7 +436,7 @@ ipcMain.handle('delete-session', (event, { sessionId } = {}) => {
   return { success: true, activeSessionId };
 });
 
-ipcMain.handle('export-session', async (event, { sessionId } = {}) => {
+register('export-session', async (event, { sessionId } = {}) => {
   if (!store || !sessionId) return { success: false };
   const session  = store.getSession(sessionId);
   const messages = store.getMessages(sessionId);
@@ -358,9 +463,9 @@ ipcMain.handle('export-session', async (event, { sessionId } = {}) => {
 
 // ─── Memory IPC ────────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-memory', () => store?.getMemory() ?? []);
+register('get-memory', () => store?.getMemory() ?? []);
 
-ipcMain.handle('approve-memories', (event, facts) => {
+register('approve-memories', (event, facts) => {
   if (!store || !Array.isArray(facts)) return { success: false };
   const VALID = new Set(['fact', 'preference', 'project', 'entity', 'procedural']);
   // Strip control chars + cap length so an LLM-extracted fact can't smuggle
@@ -385,7 +490,7 @@ ipcMain.handle('approve-memories', (event, facts) => {
   return { success: true };
 });
 
-ipcMain.handle('add-memory', (event, { content, category } = {}) => {
+register('add-memory', (event, { content, category } = {}) => {
   if (!store || !content?.trim()) return { success: false };
   // Cap memory content — too long is suspicious (likely prompt-injection
   // payload) and slows retrieval.
@@ -396,49 +501,38 @@ ipcMain.handle('add-memory', (event, { content, category } = {}) => {
   return { success: true, id };
 });
 
-ipcMain.handle('delete-memory', (event, { id } = {}) => {
+register('delete-memory', (event, { id } = {}) => {
   if (!store || !id) return { success: false };
   store.deleteMemory(id);
   return { success: true };
 });
 
-ipcMain.handle('update-memory', (event, { id, content } = {}) => {
+register('update-memory', (event, { id, content } = {}) => {
   if (!store || !id || !content?.trim()) return { success: false };
   store.updateMemory(id, content.trim());
   return { success: true };
 });
 
-ipcMain.handle('clear-all-memory', () => {
+register('clear-all-memory', () => {
   if (!store) return { success: false };
   store.clearAllMemory();
   return { success: true };
 });
 
-ipcMain.handle('open-external', (event, url) => {
+register('open-external', (event, url) => {
   if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
     shell.openExternal(url);
   }
 });
 
-// ─── Screen context ────────────────────────────────────────────────────────────
-
-ipcMain.handle('get-screen-context-config', () => SettingsStore.getScreenContextConfig());
-ipcMain.handle('save-screen-context-config', (e, cfg = {}) => {
-  SettingsStore.setScreenContextConfig(cfg);
-  const saved = SettingsStore.getScreenContextConfig();
-  if (saved.enabled) _startScreenContext(saved.interval);
-  else _stopScreenContext();
-  return { success: true };
-});
-
 // ─── TTS ────────────────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-tts-config',  ()        => SettingsStore.getTtsConfig());
-ipcMain.handle('save-tts-config', (e, cfg)  => { SettingsStore.setTtsConfig(cfg || {}); return { success: true }; });
+register('get-tts-config',  ()        => SettingsStore.getTtsConfig());
+register('save-tts-config', (e, cfg)  => { SettingsStore.setTtsConfig(cfg || {}); return { success: true }; });
 
 // ─── Feedback ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle('save-feedback', (e, data = {}) => {
+register('save-feedback', (e, data = {}) => {
   if (!store) return { success: false };
   // Cap each text field so a misbehaving renderer can't fill the DB.
   const cap = (s, n) => String(s || '').slice(0, n);
@@ -454,10 +548,10 @@ ipcMain.handle('save-feedback', (e, data = {}) => {
   });
   return { success: true, id };
 });
-ipcMain.handle('delete-feedback',       (e, id) => { store?.deleteFeedback(id); return { success: true }; });
-ipcMain.handle('get-feedback-examples', ()      => store?.getPositiveFeedback(100) ?? []);
+register('delete-feedback',       (e, id) => { store?.deleteFeedback(id); return { success: true }; });
+register('get-feedback-examples', ()      => store?.getPositiveFeedback(100) ?? []);
 
-ipcMain.handle('get-suggestions', async (e, { query = '' } = {}) => {
+register('get-suggestions', async (e, { query = '' } = {}) => {
   if (!store || !query) return { memories: [], episodes: [] };
   const [memories, episodes] = await Promise.all([
     store.getRelevantMemory(query, 6, 'chat'),
@@ -466,7 +560,7 @@ ipcMain.handle('get-suggestions', async (e, { query = '' } = {}) => {
   return { memories, episodes };
 });
 
-ipcMain.handle('export-training-data', async (e, { format = 'openai' } = {}) => {
+register('export-training-data', async (e, { format = 'openai' } = {}) => {
   if (!store) return { success: false, error: 'Store not ready' };
   const examples = store.getPositiveFeedback(10000);
   if (examples.length === 0) return { success: false, error: 'No approved examples found. Rate some responses with 👍 first.' };
@@ -496,18 +590,18 @@ ipcMain.handle('export-training-data', async (e, { format = 'openai' } = {}) => 
 
 // ─── Custom system prompt ──────────────────────────────────────────────────────
 
-ipcMain.handle('get-custom-prompt',  () => SettingsStore.getCustomSystemPrompt());
-ipcMain.handle('save-custom-prompt', (event, text) => {
+register('get-custom-prompt',  () => SettingsStore.getCustomSystemPrompt());
+register('save-custom-prompt', (event, text) => {
   SettingsStore.setCustomSystemPrompt(text || '');
   return { success: true };
 });
 
 // ─── Whisper STT ───────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-whisper-config', () => SettingsStore.getWhisperConfig());
-ipcMain.handle('save-whisper-config', (event, config) => { SettingsStore.setWhisperConfig(config || {}); return { success: true }; });
+register('get-whisper-config', () => SettingsStore.getWhisperConfig());
+register('save-whisper-config', (event, config) => { SettingsStore.setWhisperConfig(config || {}); return { success: true }; });
 
-ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
+register('transcribe-audio', (event, audioData, mimeType) => {
   return new Promise((resolve) => {
     // Cap renderer-supplied audio so a buggy/malicious renderer can't write
     // gigabytes to the temp directory before whisper-cli even starts.
@@ -572,7 +666,7 @@ ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
 
 // ─── Legacy clear-chat ─────────────────────────────────────────────────────────
 
-ipcMain.handle('clear-chat', () => {
+register('clear-chat', () => {
   if (!store) return null;
   const session = store.createSession(null, 'chat');
   activeSessionId = session.id;
@@ -582,14 +676,14 @@ ipcMain.handle('clear-chat', () => {
 
 // ─── Settings window ───────────────────────────────────────────────────────────
 
-ipcMain.handle('open-settings', () => { createSettingsWindow(); return { success: true }; });
+register('open-settings', () => { createSettingsWindow(); return { success: true }; });
 
-ipcMain.handle('get-settings', () => ({
+register('get-settings', () => ({
   appShortcuts: SettingsStore.getAppShortcuts(),
   webBookmarks: SettingsStore.getWebBookmarks(),
 }));
 
-ipcMain.handle('save-settings', (event, settings) => {
+register('save-settings', (event, settings) => {
   try {
     const appShortcutsRaw = Array.isArray(settings?.appShortcuts) ? settings.appShortcuts : [];
     const webBookmarksRaw = Array.isArray(settings?.webBookmarks) ? settings.webBookmarks : [];
@@ -645,7 +739,7 @@ function getGoogleCredentialsPath() {
   return process.env.GOOGLE_CREDENTIALS_PATH || path.join(process.cwd(), 'credentials.json');
 }
 
-ipcMain.handle('get-integrations-status', async () => {
+register('get-integrations-status', async () => {
   const credentialsPath = getGoogleCredentialsPath();
   const googleCredentialsPresent = fs.existsSync(credentialsPath);
   const googleTokenPresent = GoogleCalendarService.hasToken();
@@ -668,7 +762,7 @@ ipcMain.handle('get-integrations-status', async () => {
   };
 });
 
-ipcMain.handle('test-integration', async (event, { name } = {}) => {
+register('test-integration', async (event, { name } = {}) => {
   const n = String(name || '').toLowerCase();
   try {
     if (n === 'gemini') {
@@ -697,7 +791,7 @@ ipcMain.handle('test-integration', async (event, { name } = {}) => {
   }
 });
 
-ipcMain.handle('google-calendar-connect', async () => {
+register('google-calendar-connect', async () => {
   try {
     const now = new Date();
     const start = new Date(now.getTime() - 60 * 1000).toISOString();
@@ -707,7 +801,7 @@ ipcMain.handle('google-calendar-connect', async () => {
   } catch (error) { return { success: false, error: error.message || String(error) }; }
 });
 
-ipcMain.handle('google-calendar-logout', async () => {
+register('google-calendar-logout', async () => {
   try {
     GoogleCalendarService.logout();
     return { success: true };
@@ -716,12 +810,12 @@ ipcMain.handle('google-calendar-logout', async () => {
 
 // ─── Models / Ollama ───────────────────────────────────────────────────────────
 
-ipcMain.handle('fetch-ollama-models', async () => {
+register('fetch-ollama-models', async () => {
   try { return { success: true, models: await OllamaService.fetchModels() }; }
   catch (error) { console.error('Error fetching Ollama models:', error); return { success: false, models: [] }; }
 });
 
-ipcMain.handle('get-models', async () => {
+register('get-models', async () => {
   try {
     const [geminiModels, ollamaModels, groqModels, openRouterModels] = await Promise.all([
       GeminiService.fetchModels(),
@@ -752,29 +846,29 @@ ipcMain.handle('get-models', async () => {
   }
 });
 
-ipcMain.handle('get-model-slots',  () => SettingsStore.getModelSlots());
-ipcMain.handle('save-model-slots', (event, slots) => { SettingsStore.setModelSlots(slots); return { success: true }; });
+register('get-model-slots',  () => SettingsStore.getModelSlots());
+register('save-model-slots', (event, slots) => { SettingsStore.setModelSlots(slots); return { success: true }; });
 
 // ─── API keys ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-groq-key',   () => ({ key: SettingsStore.getGroqApiKey() }));
-ipcMain.handle('save-groq-key',  (_, { key } = {}) => { SettingsStore.setGroqApiKey(key || ''); return { success: true }; });
+register('get-groq-key',   () => ({ key: SettingsStore.getGroqApiKey() }));
+register('save-groq-key',  (_, { key } = {}) => { SettingsStore.setGroqApiKey(key || ''); return { success: true }; });
 
-ipcMain.handle('get-gemini-key', () => ({ key: SettingsStore.getGeminiApiKey() }));
-ipcMain.handle('save-gemini-key', (_, { key } = {}) => {
+register('get-gemini-key', () => ({ key: SettingsStore.getGeminiApiKey() }));
+register('save-gemini-key', (_, { key } = {}) => {
   SettingsStore.setGeminiApiKey(key || '');
   GeminiService.genAI = null;
   return { success: true };
 });
 
-ipcMain.handle('get-brave-key',  () => ({ key: SettingsStore.getBraveApiKey() }));
-ipcMain.handle('save-brave-key', (_, { key } = {}) => { SettingsStore.setBraveApiKey(key || ''); return { success: true }; });
+register('get-brave-key',  () => ({ key: SettingsStore.getBraveApiKey() }));
+register('save-brave-key', (_, { key } = {}) => { SettingsStore.setBraveApiKey(key || ''); return { success: true }; });
 
-ipcMain.handle('get-openrouter-key',  () => ({ key: SettingsStore.getOpenRouterApiKey() }));
-ipcMain.handle('save-openrouter-key', (_, { key } = {}) => { SettingsStore.setOpenRouterApiKey(key || ''); return { success: true }; });
+register('get-openrouter-key',  () => ({ key: SettingsStore.getOpenRouterApiKey() }));
+register('save-openrouter-key', (_, { key } = {}) => { SettingsStore.setOpenRouterApiKey(key || ''); return { success: true }; });
 
-ipcMain.handle('get-ollama-url',  () => ({ url: SettingsStore.getOllamaBaseUrl() }));
-ipcMain.handle('save-ollama-url', (_, { url } = {}) => {
+register('get-ollama-url',  () => ({ url: SettingsStore.getOllamaBaseUrl() }));
+register('save-ollama-url', (_, { url } = {}) => {
   // Refuse anything that doesn't parse as http(s) on a private/loopback host.
   // Otherwise a poisoned settings file could silently redirect every Ollama
   // request to an external server, exfiltrating prompts and memory facts.
@@ -799,8 +893,8 @@ ipcMain.handle('save-ollama-url', (_, { url } = {}) => {
 
 // ─── Hotkey ────────────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-hotkey',  () => ({ hotkey: SettingsStore.getHotkey() }));
-ipcMain.handle('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
+register('get-hotkey',  () => ({ hotkey: SettingsStore.getHotkey() }));
+register('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
   const key = (newHotkey || 'CommandOrControl+Shift+Space').trim();
   try {
     const oldHotkey = SettingsStore.getHotkey();
@@ -817,10 +911,10 @@ ipcMain.handle('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
 
 // ─── Wake word ─────────────────────────────────────────────────────────────────
 
-ipcMain.handle('get-wake-word-config',  () => SettingsStore.getWakeWordConfig());
-ipcMain.handle('save-wake-word-config', (e, cfg = {}) => { SettingsStore.setWakeWordConfig(cfg); return { success: true, config: SettingsStore.getWakeWordConfig() }; });
+register('get-wake-word-config',  () => SettingsStore.getWakeWordConfig());
+register('save-wake-word-config', (e, cfg = {}) => { SettingsStore.setWakeWordConfig(cfg); return { success: true, config: SettingsStore.getWakeWordConfig() }; });
 
-ipcMain.handle('show-window', () => {
+register('show-window', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -829,8 +923,8 @@ ipcMain.handle('show-window', () => {
   return { success: true };
 });
 
-ipcMain.handle('minimize-window', () => { if (mainWindow) mainWindow.hide(); });
-ipcMain.handle('close-window',    () => app.quit());
+register('minimize-window', () => { if (mainWindow) mainWindow.hide(); });
+register('close-window',    () => app.quit());
 
 // ─── AgentRuntime IPC ──────────────────────────────────────────────────────────
 
@@ -840,7 +934,7 @@ ipcMain.on('agent-permission-response', (_, { requestId, approved, alwaysAllow }
 
 const INCOGNITO_SESSION_ID = '__incognito__';
 
-ipcMain.handle('send-agent-message', async (event, data = {}) => {
+register('send-agent-message', async (event, data = {}) => {
   const { message, displayMessage, model, modelType, sessionId: reqSessionId, images = [], forceSearch = false, incognito = false } = data;
   if (!agentRuntime || !model) return { success: false, error: 'AgentRuntime not ready' };
 
@@ -877,56 +971,16 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
   }
 });
 
-ipcMain.handle('cancel-agent-message', (_, { sessionId: reqSessionId } = {}) => {
+register('cancel-agent-message', (_, { sessionId: reqSessionId } = {}) => {
   const sessionId = reqSessionId || activeSessionId;
   const ctx = sessionId && _sessionContexts.get(sessionId);
   if (ctx && agentRuntime) agentRuntime.abort(ctx);
   return { success: true };
 });
 
-ipcMain.handle('clear-incognito', () => {
+register('clear-incognito', () => {
   if (agentRuntime) agentRuntime.clearIncognitoHistory();
   _sessionContexts.delete(INCOGNITO_SESSION_ID);
   return { success: true };
 });
 
-// ─── Screen context helpers ────────────────────────────────────────────────────
-
-async function _updateScreenContext() {
-  try {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1280, height: 720 },
-    });
-    if (!sources.length) return;
-    const b64 = sources[0].thumbnail.toJPEG(75).toString('base64');
-
-    const slots = SettingsStore.getModelSlots();
-    const { model, type } = slots.vision || {};
-    const provider = { gemini: geminiProvider, ollama: ollamaProvider }[type];
-    if (!provider || !model) return;
-
-    const msgs = provider.initMessages([], null, [], null, null, 'chat');
-    provider.appendUser(msgs, 'Describe what is on screen in 1-2 sentences. Be concise and factual.', [
-      { mimeType: 'image/jpeg', data: b64 },
-    ]);
-    const result = await provider.chatWithTools(msgs, model, null, null, 'chat');
-    if (result?.text) {
-      _screenContext = result.text.trim().slice(0, 400);
-      console.log('[ScreenContext] Updated:', _screenContext.slice(0, 80));
-    }
-  } catch (err) {
-    console.warn('[ScreenContext]', err.message);
-  }
-}
-
-function _startScreenContext(intervalSecs) {
-  _stopScreenContext();
-  _updateScreenContext();
-  _screenContextTimer = setInterval(_updateScreenContext, (intervalSecs || 60) * 1000);
-}
-
-function _stopScreenContext() {
-  if (_screenContextTimer) { clearInterval(_screenContextTimer); _screenContextTimer = null; }
-  _screenContext = null;
-}

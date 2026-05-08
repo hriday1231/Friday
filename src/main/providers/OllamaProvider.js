@@ -14,8 +14,8 @@ class OllamaProvider extends BaseProvider {
   }
 
   /** Start a fresh messages array with the system instruction (memory + episodes + summary injected). */
-  initMessages(memoryEntries = [], contextSummary = null, episodes = [], agent = null, projectInstructions = null, appMode = 'chat', fewShots = [], screenContext = null) {
-    return [{ role: 'system', content: buildSystemPrompt(memoryEntries, contextSummary, episodes, agent, projectInstructions, appMode, fewShots, screenContext) }];
+  initMessages(memoryEntries = [], contextSummary = null, episodes = [], agent = null, projectInstructions = null, appMode = 'chat', fewShots = []) {
+    return [{ role: 'system', content: buildSystemPrompt(memoryEntries, contextSummary, episodes, agent, projectInstructions, appMode, fewShots) }];
   }
 
   appendUser(messages, text, images = []) {

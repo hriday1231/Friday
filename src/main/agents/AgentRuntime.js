@@ -71,12 +71,11 @@ class AgentRuntime {
    * @param {Function} opts.emit            — async (event: object) => void
    *   Called for every typed event. In production this wraps win.webContents.send.
    */
-  constructor({ toolRegistry, providerManager, store, emit, getScreenContext }) {
+  constructor({ toolRegistry, providerManager, store, emit }) {
     this._toolRegistry      = toolRegistry;
     this._providerManager   = providerManager;
     this._store             = store;
     this._emit              = emit;
-    this._getScreenContext  = typeof getScreenContext === 'function' ? getScreenContext : () => null;
 
     /** @type {Map<string, (approved: boolean, alwaysAllow: boolean) => void>} */
     this._pendingPermissions = new Map();
@@ -186,11 +185,10 @@ class AgentRuntime {
       : (this._store ? this._store.getRecentPairs(sessionId, RECENT_PAIRS) : []);
     const summary  = incognito ? null : (this._store?.getSessionSummary(sessionId)?.text ?? null);
 
-    const screenContext = incognito ? null : (this._getScreenContext() || null);
     const messages = provider.initMessages(
       memoryEntries, summary, episodes,
       context.agent ?? null, null,
-      appMode, fewShots, screenContext
+      appMode, fewShots
     );
     for (const turn of history) {
       provider.appendUser(messages, turn.user);
@@ -417,8 +415,7 @@ class AgentRuntime {
 
     const provider  = this._providerManager._route(modelName);
     const summary   = this._store?.getSessionSummary(sessionId)?.text ?? null;
-    const screenContext = this._getScreenContext() || null;
-    const messages  = provider.initMessages(memoryEntries, summary, episodes, context.agent, null, appMode, [], screenContext);
+    const messages  = provider.initMessages(memoryEntries, summary, episodes, context.agent, null, appMode, []);
     provider.appendUser(messages, summaryPrompt, images);
 
     let textContent = '';

@@ -8,6 +8,8 @@
   <title>Friday Settings</title>
   <link rel="stylesheet" href="styles/main.css" />
   <link rel="stylesheet" href="styles/settings.css" />
+  <!-- Web bridge shim: no-op when Electron preload already defined window.electronAPI. -->
+  <script src="webShim.js"></script>
 </head>
 <body>
   <div id="settingsApp" class="settings-app">
@@ -73,29 +75,6 @@
                 <button class="settings-action-btn" id="googleConnectBtn">Connect / Re-auth</button>
                 <button class="settings-danger-btn" id="googleLogoutBtn">Logout</button>
                 <button class="settings-action-btn" data-test="google">Test Google</button>
-              </div>
-            </div>
-
-            <div class="settings-card" id="card-screen-context">
-              <div class="settings-card-header">
-                <div>
-                  <div class="settings-card-title">Screen Context</div>
-                  <div class="settings-card-subtitle">Ambient screen awareness — Friday sees what you're working on (opt-in)</div>
-                </div>
-                <span class="settings-badge" id="badge-screen-context">Off</span>
-              </div>
-              <div class="settings-card-body">
-                <label class="settings-field-label" style="margin-bottom:10px">
-                  <input type="checkbox" id="screenContextEnabled" style="margin-right:6px">
-                  Enable screen context
-                </label>
-                <label class="settings-field-label">Capture interval (seconds)
-                  <input type="number" id="screenContextInterval" class="settings-text-input" min="15" max="3600" placeholder="60" style="margin-top:4px">
-                </label>
-                <p class="settings-hint" style="margin-top:8px">Captures a screenshot every N seconds and sends it to your vision model. The text description is injected into Friday's context so she knows what's on your screen.</p>
-              </div>
-              <div class="settings-card-actions">
-                <button class="settings-primary-btn" id="saveScreenContextBtn">Save</button>
               </div>
             </div>
 

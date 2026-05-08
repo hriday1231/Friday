@@ -13,7 +13,7 @@ class GeminiProvider extends BaseProvider {
   }
 
   /** Start a fresh messages array. Memory entries, episodes, summary and agent are stored for chatWithTools. */
-  initMessages(memoryEntries = [], contextSummary = null, episodes = [], agent = null, projectInstructions = null, appMode = 'chat', fewShots = [], screenContext = null) {
+  initMessages(memoryEntries = [], contextSummary = null, episodes = [], agent = null, projectInstructions = null, appMode = 'chat', fewShots = []) {
     this._memoryEntries       = memoryEntries;
     this._contextSummary      = contextSummary;
     this._episodes            = episodes;
@@ -21,7 +21,6 @@ class GeminiProvider extends BaseProvider {
     this._projectInstructions = projectInstructions;
     this._appMode             = appMode;
     this._fewShots            = fewShots;
-    this._screenContext       = screenContext;
     return [];
   }
 
@@ -72,7 +71,7 @@ class GeminiProvider extends BaseProvider {
     const excludeTools = opts && opts.excludeTools;
     const modelInstance = GeminiService.genAI.getGenerativeModel({
       model: modelName,
-      systemInstruction: buildSystemPrompt(this._memoryEntries || [], this._contextSummary || null, this._episodes || [], this._agent || null, this._projectInstructions || null, this._appMode || 'chat', this._fewShots || [], this._screenContext || null),
+      systemInstruction: buildSystemPrompt(this._memoryEntries || [], this._contextSummary || null, this._episodes || [], this._agent || null, this._projectInstructions || null, this._appMode || 'chat', this._fewShots || []),
       tools: [{ functionDeclarations: this.toolRegistry.getGeminiFunctionDeclarations(excludeTools) }]
     });
 

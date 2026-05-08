@@ -18,6 +18,8 @@
   <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
   <script src="../../node_modules/@highlightjs/cdn-assets/highlight.min.js"></script>
   <script src="../../node_modules/katex/dist/katex.min.js"></script>
+  <!-- Web bridge shim: no-op when Electron preload already defined window.electronAPI. -->
+  <script src="webShim.js"></script>
 </head>
 <body data-mode="chat">
   <div id="app">

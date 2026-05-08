@@ -12,10 +12,14 @@
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
     "install-shortcut": "powershell -ExecutionPolicy Bypass -File scripts/install-start-menu-shortcut.ps1",
+    "web": "electron . --web --web-only --local-only",
+    "web:both": "electron . --web --local-only",
+    "web:cloud": "electron . --web --web-only",
     "eval": "node scripts/eval.js",
     "eval:search": "node scripts/eval.js --filter search",
     "eval:chat": "node scripts/eval.js --filter chat",
-    "eval:verbose": "node scripts/eval.js --verbose"
+    "eval:verbose": "node scripts/eval.js --verbose",
+    "eval:ui": "node scripts/eval-ui.js"
   },
   "keywords": [
     "electron",

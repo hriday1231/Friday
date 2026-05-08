@@ -22,7 +22,7 @@ src/main/          — Node.js / Electron main process
     ProviderManager.js — routes model → provider
     All must implement: initMessages, appendUser, appendHistoryAssistant,
       appendResponse, appendToolResults, chatWithTools, fetchModels
-  config/systemPrompt.js  — Builds system prompt (memory + episodes + fewShots + screenContext)
+  config/systemPrompt.js  — Builds system prompt (memory + episodes + fewShots)
   store/PersistentStore.js — SQLite via sql.js (sync queries, debounced disk flush)
   memory/MemoryEmbedder.js — Embedding service for semantic memory retrieval
   tools/builtin/          — One file per tool: { declaration, handler } exports
@@ -85,7 +85,8 @@ All four providers implement the same interface. The `ProviderManager` routes mo
 - Don't call LLM providers directly from tools — tools return strings, AgentRuntime calls LLMs
 - Don't add `require('dotenv').config()` anywhere except main.js
 - Don't hardcode API endpoints — use the Service class (`GroqService.baseURL`, etc.)
-- Don't reintroduce cowork mode, code execution, file system tools, scheduler, task queue, or HTTP API server — those were intentionally removed in the scale-back
+- Don't reintroduce cowork mode, code execution, file system tools, scheduler, or task queue — those were intentionally removed in the scale-back
+- Don't make HTTP a primary IPC mechanism for production. The `--web` bridge in `src/main/webBridge.js` is opt-in dev/test only: gated behind a CLI flag, bound to `127.0.0.1`, never started by `npm start`. Don't move agent state, providers, or settings to be HTTP-first.
 
 ### Adding a provider
 1. Create `src/main/services/XxxService.js` (API key, base URL, fetchModels, DEFAULT_MODELS)
@@ -99,7 +100,27 @@ All four providers implement the same interface. The `ProviderManager` routes mo
 
 ## Dev Commands
 ```bash
-npm start          # Launch Electron app
-npm run build      # Build distributable
+npm start                                     # Launch Electron app
+npm run build                                 # Build distributable
+
+# Browser-driven dev/test mode (loopback-only HTTP+WS bridge)
+npm run web                                   # No Electron window; Ollama-only providers
+npm run web:both                              # Electron window AND web bridge
+npm run web -- --reset-state                  # Wipe DB + settings before boot
+npm run web -- --seed scripts/seed-fixtures/with-memory.json
+npm run web -- --test-model qwen2.5:7b        # Override default Ollama model
+
+# Open in browser:
+#   http://127.0.0.1:4173/?web=1
+
+npm run eval:ui                               # Answer-quality eval against running bridge
 ```
-No test suite. Manual testing only. Windows-first; Mac paths may differ.
+
+CLI flags:
+- `--web` / `--web-only` — start the bridge; `--web-only` skips the desktop window/tray/hotkey
+- `--local-only` — only Ollama provider; fails fast if Ollama or required models are missing (default chat model: `gpt-oss:20b`, embeddings: `nomic-embed-text`)
+- `--reset-state` — wipe SQLite + settings before init
+- `--seed <path>` — load a JSON fixture (see `scripts/seed-fixtures/`)
+- `--test-model <name>` / `FRIDAY_TEST_MODEL` — override the local-only chat model
+
+No test suite beyond the eval scripts. Manual testing for desktop UI; bridge mode for browser-driven smoke + answer-quality eval. Windows-first; Mac paths may differ.

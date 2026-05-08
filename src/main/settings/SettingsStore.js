@@ -70,8 +70,6 @@ class SettingsStore {
         openRouterApiKey: '',
         ollamaBaseUrl: 'http://localhost:11434',
         hotkey: 'CommandOrControl+Shift+Space',
-        screenContextEnabled:  false,
-        screenContextInterval: 60,  // seconds between captures
         ttsAutoRead: false,
         ttsVoice:    '',    // SpeechSynthesis voice name; empty = browser default
         ttsRate:     1.0,
@@ -278,20 +276,6 @@ class SettingsStore {
       throw new Error(`Refusing URL with protocol "${parsed.protocol}" — only http(s) is allowed`);
     }
     return parsed.toString();
-  }
-
-  // ----- Screen context -----
-
-  getScreenContextConfig() {
-    return {
-      enabled:  this.store.get('screenContextEnabled',  false),
-      interval: this.store.get('screenContextInterval', 60),
-    };
-  }
-
-  setScreenContextConfig({ enabled, interval } = {}) {
-    if (typeof enabled  === 'boolean') this.store.set('screenContextEnabled',  enabled);
-    if (interval !== undefined)        this.store.set('screenContextInterval', Number(interval) || 60);
   }
 
   // ----- TTS -----

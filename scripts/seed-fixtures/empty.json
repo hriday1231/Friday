@@ -1,0 +1,15 @@
+{
+  "_description": "Fresh DB, default settings. Identical to a brand-new install except settings are explicitly set to a deterministic baseline (gpt-oss:20b for chat, no API keys).",
+  "sessions": [],
+  "messages": [],
+  "memory": [],
+  "feedback": [],
+  "settings": {
+    "modelSlots": {
+      "chat":   { "model": "gpt-oss:20b", "type": "ollama" },
+      "vision": { "model": "llama3.2-vision:11b", "type": "ollama" },
+      "cloud":  { "model": "gpt-oss:20b", "type": "ollama" }
+    },
+    "ollamaBaseUrl": "http://localhost:11434"
+  }
+}

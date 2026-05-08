@@ -95,10 +95,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getHotkey:  ()       => ipcRenderer.invoke('get-hotkey'),
   saveHotkey: (hotkey) => ipcRenderer.invoke('save-hotkey', { hotkey }),
 
-  // ── Screen context ────────────────────────────────────────────────────────
-  getScreenContextConfig:  ()    => ipcRenderer.invoke('get-screen-context-config'),
-  saveScreenContextConfig: (cfg) => ipcRenderer.invoke('save-screen-context-config', cfg),
-
   // ── TTS ───────────────────────────────────────────────────────────────────
   getTtsConfig:  ()    => ipcRenderer.invoke('get-tts-config'),
   saveTtsConfig: (cfg) => ipcRenderer.invoke('save-tts-config', cfg),
