@@ -70,6 +70,13 @@ class OllamaProvider extends BaseProvider {
     const tools = this.toolRegistry.getOllamaTools(excludeTools);
     const baseURL = OllamaService.baseURL;
 
+    // gpt-oss models default to medium-effort chain-of-thought reasoning before
+    // every answer. On simple prompts that costs hundreds of "thinking" tokens
+    // for no quality gain — a 10× perceived latency tax. Force low effort for
+    // gpt-oss family. Other models silently ignore the `think` field.
+    const isThinkingModel = /gpt-oss/i.test(modelName);
+    const thinkLevel = isThinkingModel ? 'low' : undefined;
+
     let response;
     try {
       response = await axios.post(
@@ -79,6 +86,7 @@ class OllamaProvider extends BaseProvider {
           messages,
           tools,
           stream: true,
+          think: thinkLevel,
           options: { temperature: this._temperature(appMode), num_predict: this._numPredict(appMode) }
         },
         { responseType: 'stream', timeout: 120000, signal }
@@ -98,6 +106,7 @@ class OllamaProvider extends BaseProvider {
             model: modelName,
             messages: cleanMessages,
             stream: true,
+            think: thinkLevel,
             options: { temperature: this._temperature(appMode), num_predict: this._numPredict(appMode) }
           },
           { responseType: 'stream', timeout: 120000, signal }
