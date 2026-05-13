@@ -51,6 +51,21 @@ let geminiProvider, ollamaProvider, groqProvider, openRouterProvider;
 /** @type {Map<string, SessionContext>} */
 const _sessionContexts = new Map();
 
+// ─── Single-instance lock ──────────────────────────────────────────────────────
+// Only one Friday process at a time. If a second copy is launched (taskbar,
+// Start Menu, shortcut, etc.), we exit it immediately and the already-running
+// process surfaces its window so the user sees Friday come to the front.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 function _iconPath() {
   const base = path.join(__dirname, '../../public');
   if (process.platform === 'darwin') return path.join(base, 'icon.icns');
