@@ -36,6 +36,7 @@ const SettingsStore      = require('./settings/SettingsStore');
 const BraveSearchService = require('./services/BraveSearchService');
 const GoogleCalendarService = require('./services/GoogleCalendarService');
 const PersistentStore    = require('./store/PersistentStore');
+const WakeWordService    = require('./services/WakeWordService');
 
 let mainWindow = null;
 let settingsWindow = null;
@@ -849,6 +850,54 @@ ipcMain.handle('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
 
 ipcMain.handle('get-wake-word-config',  () => SettingsStore.getWakeWordConfig());
 ipcMain.handle('save-wake-word-config', (e, cfg = {}) => { SettingsStore.setWakeWordConfig(cfg); return { success: true, config: SettingsStore.getWakeWordConfig() }; });
+
+// OpenWakeWord pipeline (loaded lazily on first start). Audio frames are
+// shipped from the renderer over IPC (one-way, send not invoke for throughput).
+// Detections are broadcast back via 'wake-detected' on webContents.
+let wakeWordService = null;
+
+function _wakeWordDir() {
+  return path.join(app.getPath('userData'), 'friday', 'wakeword');
+}
+
+ipcMain.handle('wake-word-list-phrases', () => {
+  return Object.entries(WakeWordService.PHRASES).map(([id, info]) => ({ id, display: info.display }));
+});
+
+ipcMain.handle('wake-word-start', async (_e, { phrase = 'hey_jarvis' } = {}) => {
+  try {
+    if (!wakeWordService) {
+      wakeWordService = new WakeWordService({
+        modelDir: _wakeWordDir(),
+        onWake: (prob) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('wake-detected', { phrase: SettingsStore.getWakeWordConfig().phrase, prob });
+          }
+        },
+      });
+    }
+    await wakeWordService.load(phrase);
+    wakeWordService.resume();
+    return { success: true };
+  } catch (err) {
+    console.error('[wake-word-start] failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('wake-word-stop', () => {
+  wakeWordService?.pause();
+  return { success: true };
+});
+
+// Audio frames come in as ArrayBuffer (Float32 raw bytes). Fire-and-forget.
+ipcMain.on('wake-word-frame', (_event, arrayBuffer) => {
+  if (!wakeWordService || !arrayBuffer) return;
+  const f32 = new Float32Array(arrayBuffer);
+  wakeWordService.pushAudio(f32).catch((err) => {
+    console.warn('[wake-word-frame] pushAudio failed:', err.message);
+  });
+});
 
 ipcMain.handle('show-window', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {

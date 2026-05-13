@@ -75,7 +75,7 @@ class SettingsStore {
         ttsRate:     1.0,
         ttsPitch:    1.0,
         wakeWordEnabled: false,
-        wakeWordPhrase:  'hey friday', // phrase to listen for
+        wakeWordPhrase:  'hey_jarvis', // OpenWakeWord model id; see WakeWordService.PHRASES
         modelSlots: {
           chat:   { model: 'gpt-oss:20b',           type: 'ollama' },
           vision: { model: 'llama3.2-vision:11b',   type: 'ollama' },
@@ -301,13 +301,23 @@ class SettingsStore {
   getWakeWordConfig() {
     return {
       enabled: this.store.get('wakeWordEnabled', false),
-      phrase:  this.store.get('wakeWordPhrase',  'hey friday'),
+      // Coerce legacy free-text phrases to a supported OpenWakeWord model id.
+      // Old values like "hey friday" silently fall back to hey_jarvis.
+      phrase:  (() => {
+        const stored = String(this.store.get('wakeWordPhrase', 'hey_jarvis') || '').toLowerCase().trim().replace(/\s+/g, '_');
+        const ALLOWED = new Set(['hey_jarvis', 'alexa', 'hey_mycroft', 'hey_rhasspy']);
+        return ALLOWED.has(stored) ? stored : 'hey_jarvis';
+      })(),
     };
   }
 
   setWakeWordConfig({ enabled, phrase } = {}) {
     if (typeof enabled === 'boolean') this.store.set('wakeWordEnabled', enabled);
-    if (phrase !== undefined) this.store.set('wakeWordPhrase', String(phrase || 'hey friday').toLowerCase().trim());
+    if (phrase !== undefined) {
+      const ALLOWED = new Set(['hey_jarvis', 'alexa', 'hey_mycroft', 'hey_rhasspy']);
+      const normalized = String(phrase || 'hey_jarvis').toLowerCase().trim().replace(/\s+/g, '_');
+      this.store.set('wakeWordPhrase', ALLOWED.has(normalized) ? normalized : 'hey_jarvis');
+    }
   }
 }
 

@@ -236,15 +236,18 @@ function wireIntegrationsPage() {
   });
 
   $('saveWakeWordBtn')?.addEventListener('click', async () => {
+    const phraseSel = $('wakeWordPhrase');
+    const phraseId = (phraseSel?.value || 'hey_jarvis').trim().toLowerCase();
+    const phraseLabel = phraseSel?.selectedOptions?.[0]?.textContent || phraseId;
     const cfg = {
       enabled: !!$('wakeWordEnabled')?.checked,
-      phrase:  ($('wakeWordPhrase')?.value || 'hey friday').trim().toLowerCase(),
+      phrase:  phraseId,
     };
     const res = await window.electronAPI?.saveWakeWordConfig?.(cfg);
     if (res?.success) {
       const badge = $('badge-wake-word');
-      if (badge) setBadge(badge, cfg.enabled ? 'ok' : 'warn', cfg.enabled ? `"${cfg.phrase}"` : 'Off');
-      showToast(cfg.enabled ? `Listening for "${cfg.phrase}"` : 'Wake word disabled', 'ok');
+      if (badge) setBadge(badge, cfg.enabled ? 'ok' : 'warn', cfg.enabled ? phraseLabel : 'Off');
+      showToast(cfg.enabled ? `Listening for "${phraseLabel}"` : 'Wake word disabled', 'ok');
     } else {
       showToast(res?.error || 'Failed to save wake word config', 'err');
     }
@@ -427,6 +430,7 @@ function wireModelsPage() {
 
   // OpenRouter
   $('openrouterLink')?.addEventListener('click', () => window.electronAPI?.openExternal?.('https://openrouter.ai/keys'));
+  $('owwLink')?.addEventListener('click', (e) => { e.preventDefault(); window.electronAPI?.openExternal?.('https://github.com/dscripka/openWakeWord'); });
   $('saveOpenRouterKeyBtn')?.addEventListener('click', async () => {
     const key = $('openrouterApiKeyInput')?.value?.trim() || '';
     await window.electronAPI?.saveOpenRouterKey?.(key);
@@ -880,10 +884,9 @@ async function runMicLevelTest() {
   _micTestRunning = false;
 }
 
-// Records 4 seconds via AudioWorklet → WAV (no ffmpeg needed), sends to
-// whisper-cli, then matches the result against the configured wake phrase.
-// Uses the SAME pipeline as WakeWordDetector so the test result accurately
-// reflects what wake word will do in production.
+// Records 4 seconds via AudioWorklet and streams PCM to the main-process
+// OpenWakeWord pipeline. Reports whether the configured phrase was detected.
+// Uses the same path as production wake-word so the test is accurate.
 let _wakeTestRunning = false;
 async function runWakePhraseTest() {
   if (_wakeTestRunning) return;
@@ -892,13 +895,7 @@ async function runWakePhraseTest() {
   const result = $('wakeTestResult');
   if (!btn || !status || !result) return;
 
-  // Reuse the in-form values so the user doesn't have to save first.
-  const phrase = ($('wakeWordPhrase')?.value || 'hey friday').trim().toLowerCase();
-  const cfg    = await window.electronAPI?.getWhisperConfig?.();
-  if (!cfg?.exePath || !cfg?.modelPath) {
-    result.innerHTML = '<span style="color:#e88">Whisper isn\'t configured. Set whisper-cli + model paths above first.</span>';
-    return;
-  }
+  const phrase = ($('wakeWordPhrase')?.value || 'hey_jarvis').trim().toLowerCase();
 
   let stream, ctx, worklet, source, silencer;
   try {
@@ -915,8 +912,6 @@ async function runWakePhraseTest() {
     return;
   }
 
-  // Reuse the inline worklet bundled with WakeWordDetector — same encoder,
-  // same WAV bytes the production wake path will produce.
   const workletCode = `
     class PCMCaptureProcessor extends AudioWorkletProcessor {
       process(inputs) {
@@ -934,15 +929,33 @@ async function runWakePhraseTest() {
   } catch (err) {
     stream.getTracks().forEach(t => t.stop());
     try { await ctx.close(); } catch {}
-    result.innerHTML = `<span style="color:#e88">AudioWorklet failed: ${err.message || err}. CSP or browser support issue?</span>`;
+    result.innerHTML = `<span style="color:#e88">AudioWorklet failed: ${err.message || err}.</span>`;
     return;
   }
 
   _wakeTestRunning = true;
   btn.disabled = true;
   result.textContent = '';
+  status.textContent = 'Loading wake-word model…';
 
-  const frames = [];
+  // Boot the backend pipeline (downloads models on first call).
+  const startRes = await window.electronAPI?.wakeWordStart?.(phrase);
+  if (!startRes?.success) {
+    stream.getTracks().forEach(t => t.stop());
+    try { await ctx.close(); } catch {}
+    result.innerHTML = `<span style="color:#e88">Wake-word backend failed: ${startRes?.error || 'unknown error'}</span>`;
+    btn.disabled = false; _wakeTestRunning = false;
+    status.textContent = 'Tap to test wake phrase.';
+    return;
+  }
+
+  let detected = false;
+  let detectedProb = 0;
+  const unsub = window.electronAPI?.onWakeDetected?.((data) => {
+    detected = true;
+    detectedProb = data?.prob || 0;
+  });
+
   try {
     worklet  = new AudioWorkletNode(ctx, 'settings-pcm-capture');
     source   = ctx.createMediaStreamSource(stream);
@@ -951,68 +964,50 @@ async function runWakePhraseTest() {
     source.connect(worklet);
     worklet.connect(silencer);
     silencer.connect(ctx.destination);
-    worklet.port.onmessage = (e) => { frames.push(e.data); };
+    worklet.port.onmessage = (e) => {
+      try { window.electronAPI?.wakeWordPushAudio?.(e.data); } catch {}
+    };
   } catch (err) {
+    try { unsub?.(); } catch {}
     stream.getTracks().forEach(t => t.stop());
     try { await ctx.close(); } catch {}
+    await window.electronAPI?.wakeWordStop?.().catch(() => {});
     result.innerHTML = `<span style="color:#e88">Capture wiring failed: ${err.message || err}</span>`;
     btn.disabled = false; _wakeTestRunning = false;
+    status.textContent = 'Tap to test wake phrase.';
     return;
   }
 
-  // Visual countdown
+  // Visual countdown — show "Listening… 4s" → 3s → 2s → 1s → done
   const DURATION_MS = 4000;
   const startedAt = performance.now();
   const tickStatus = () => {
+    if (!_wakeTestRunning) return;
     const remaining = Math.max(0, Math.ceil((DURATION_MS - (performance.now() - startedAt)) / 1000));
-    status.textContent = remaining > 0 ? `Listening… ${remaining}s` : 'Transcribing…';
-    if (remaining > 0 && _wakeTestRunning) requestAnimationFrame(tickStatus);
+    status.textContent = remaining > 0 ? `Listening… ${remaining}s` : 'Analyzing…';
+    if (remaining > 0) requestAnimationFrame(tickStatus);
   };
   tickStatus();
 
   await new Promise(r => setTimeout(r, DURATION_MS));
 
-  // Tear down audio pipeline
+  // Tear down audio pipeline and unsubscribe.
   try { worklet.disconnect(); source.disconnect(); silencer.disconnect(); } catch {}
   stream.getTracks().forEach(t => t.stop());
   try { await ctx.close(); } catch {}
+  // Small buffer so any in-flight inference can fire.
+  await new Promise(r => setTimeout(r, 300));
+  try { unsub?.(); } catch {}
+  await window.electronAPI?.wakeWordStop?.().catch(() => {});
 
-  status.textContent = 'Transcribing…';
-  try {
-    if (typeof window.WakeWordDetector?._encodeWav !== 'function') {
-      result.innerHTML = '<span style="color:#e88">WakeWordDetector script not loaded.</span>';
-      return;
-    }
-    const wavBytes = window.WakeWordDetector._encodeWav(frames, 16000);
-    const res      = await window.electronAPI?.transcribeAudio?.(wavBytes, 'audio/wav');
-    if (!res?.success) {
-      const err = res?.error || 'unknown error';
-      const escErr = String(err).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      const isInitFail = /failed to initialize whisper context|cuda|gpu|compute capability/i.test(err);
-      const hint = isInitFail
-        ? '<br><span style="color:#fc8">Hint: your whisper.cpp build may not support this GPU. Try enabling <strong>"Force CPU mode"</strong> in the Whisper card above and re-test.</span>'
-        : '';
-      result.innerHTML = `<span style="color:#e88">Transcription failed: ${escErr}</span>${hint}`;
-    } else if (!res.transcript) {
-      result.innerHTML = '<span style="color:var(--t-mid)">Whisper returned no text. Try speaking louder or check the mic test above.</span>';
-    } else {
-      const text  = res.transcript;
-      const lower = text.toLowerCase().trim();
-      const matched = lower.includes(phrase);
-      const tail = matched ? lower.replace(phrase, '').trim() : '';
-      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      result.innerHTML = matched
-        ? `Heard: <strong>"${escape(text)}"</strong><br><span style="color:#6c6">✓ Wake phrase "${escape(phrase)}" detected.</span>` +
-          (tail ? `<br>Would submit command: <strong>"${escape(tail)}"</strong>` : '<br>(no command after the phrase — mic would auto-activate)')
-        : `Heard: <strong>"${escape(text)}"</strong><br><span style="color:#e88">✗ Phrase "${escape(phrase)}" not found in transcript.</span>`;
-    }
-  } catch (err) {
-    result.innerHTML = `<span style="color:#e88">Test failed: ${err.message || err}</span>`;
-  } finally {
-    status.textContent = 'Records 4s and transcribes via Whisper.';
-    btn.disabled = false;
-    _wakeTestRunning = false;
-  }
+  const displayPhrase = ($('wakeWordPhrase')?.selectedOptions?.[0]?.textContent) || phrase;
+  result.innerHTML = detected
+    ? `<span style="color:#6c6">✓ Detected <strong>"${displayPhrase}"</strong> (p=${detectedProb.toFixed(3)}).</span> Production wake will activate after the phrase — speak your command after, and it gets transcribed via Whisper.`
+    : `<span style="color:#e88">✗ No detection.</span> Try again: clear speech, the phrase by itself, close to the mic. If you've never used wake-word before, the first run downloads ~3.5 MB of models from GitHub.`;
+
+  status.textContent = 'Tap to test wake phrase.';
+  btn.disabled = false;
+  _wakeTestRunning = false;
 }
 
 // ── Wake word settings ────────────────────────────────────────────────────────

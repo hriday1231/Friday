@@ -103,6 +103,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Wake word ─────────────────────────────────────────────────────────────
   getWakeWordConfig:  ()    => ipcRenderer.invoke('get-wake-word-config'),
   saveWakeWordConfig: (cfg) => ipcRenderer.invoke('save-wake-word-config', cfg),
+  wakeWordListPhrases: ()           => ipcRenderer.invoke('wake-word-list-phrases'),
+  wakeWordStart:       (phrase)     => ipcRenderer.invoke('wake-word-start', { phrase }),
+  wakeWordStop:        ()           => ipcRenderer.invoke('wake-word-stop'),
+  // Fire-and-forget audio frame push (Float32Array @ 16kHz mono); we transfer
+  // the underlying ArrayBuffer for zero-copy and to avoid TypedArray-clone cost.
+  wakeWordPushAudio:   (float32)    => ipcRenderer.send('wake-word-frame', float32.buffer.slice(float32.byteOffset, float32.byteOffset + float32.byteLength)),
+  onWakeDetected: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('wake-detected', handler);
+    return () => ipcRenderer.removeListener('wake-detected', handler);
+  },
   showWindow:         ()    => ipcRenderer.invoke('show-window'),
 
   // ── AgentRuntime event-driven chat ────────────────────────────────────────

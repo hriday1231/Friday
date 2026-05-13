@@ -417,12 +417,17 @@
                 Enable wake word detection
               </label>
               <label class="settings-field-label" style="margin-bottom:6px">Wake phrase
-                <input type="text" id="wakeWordPhrase" class="settings-text-input" placeholder="hey friday" style="margin-top:4px">
+                <select id="wakeWordPhrase" class="settings-text-input" style="margin-top:4px">
+                  <option value="hey_jarvis">Hey Jarvis</option>
+                  <option value="alexa">Alexa</option>
+                  <option value="hey_mycroft">Hey Mycroft</option>
+                  <option value="hey_rhasspy">Hey Rhasspy</option>
+                </select>
               </label>
               <p style="font-size:11.5px;color:var(--t-mid);margin:6px 0 0">
-                Whisper must be configured (above). The phrase is matched case-insensitively anywhere
-                in the transcription. Any words you say <em>after</em> the phrase are submitted as a
-                command automatically.
+                Powered by <a href="https://github.com/dscripka/openWakeWord" id="owwLink" style="color:var(--t-mid);text-decoration:underline">OpenWakeWord</a> —
+                tiny ONNX models that detect the phrase in ~50 ms locally on CPU. Models (~3.5 MB) are downloaded once
+                on first enable. Whatever you say <em>after</em> the wake phrase is transcribed via Whisper and submitted as a command.
               </p>
             </div>
             <div class="settings-card-actions">
