@@ -725,6 +725,32 @@ ipcMain.handle('fetch-ollama-models', async () => {
   catch (error) { console.error('Error fetching Ollama models:', error); return { success: false, models: [] }; }
 });
 
+// Per-model capability lookup (e.g. ['completion','tools','thinking']) — used by
+// the UI to decide whether to show the reasoning-effort toggle. Cached forever
+// per model name since capabilities are baked into the model on `ollama create`.
+const _ollamaModelCapsCache = new Map();
+ipcMain.handle('get-ollama-model-capabilities', async (_event, { model } = {}) => {
+  if (!model || typeof model !== 'string') return { success: false, capabilities: [] };
+  if (!_ollamaModelCapsCache.has(model)) {
+    const axios = require('axios');
+    _ollamaModelCapsCache.set(model, (async () => {
+      try {
+        const res = await axios.post(
+          `${OllamaService.baseURL}/api/show`,
+          { model },
+          { timeout: 5000 }
+        );
+        return Array.isArray(res.data?.capabilities) ? res.data.capabilities : [];
+      } catch (err) {
+        console.warn(`[ollama-caps] failed for ${model}:`, err.message);
+        return [];
+      }
+    })());
+  }
+  const capabilities = await _ollamaModelCapsCache.get(model);
+  return { success: true, capabilities };
+});
+
 ipcMain.handle('get-models', async () => {
   try {
     const [geminiModels, ollamaModels, groqModels, openRouterModels] = await Promise.all([

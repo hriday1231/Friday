@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   googleCalendarConnect: () => ipcRenderer.invoke('google-calendar-connect'),
   googleCalendarLogout: () => ipcRenderer.invoke('google-calendar-logout'),
   fetchOllamaModels: () => ipcRenderer.invoke('fetch-ollama-models'),
+  getOllamaModelCapabilities: (model) => ipcRenderer.invoke('get-ollama-model-capabilities', { model }),
   getModels: () => ipcRenderer.invoke('get-models'),
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   closeWindow: () => ipcRenderer.invoke('close-window'),

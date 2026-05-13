@@ -70,17 +70,15 @@ class OllamaProvider extends BaseProvider {
     const tools = this.toolRegistry.getOllamaTools(excludeTools);
     const baseURL = OllamaService.baseURL;
 
-    // gpt-oss is a thinking model: it accepts `think: "low"|"medium"|"high"`.
-    // The level can be passed per request via opts.reasoningEffort. Default is
-    // "medium" (matches the model's native default). Non-thinking models
-    // silently ignore the `think` field, so we still gate by model name to
-    // avoid sending it where it's noise.
-    const isThinkingModel = /gpt-oss/i.test(modelName);
+    // Reasoning-effort plumbing. Any Ollama model whose `capabilities` include
+    // "thinking" honors `think: "low"|"medium"|"high"`. The renderer queries
+    // capabilities via get-ollama-model-capabilities and only sends
+    // reasoningEffort when it's applicable, so we just pass it through here
+    // and leave the gating to the renderer. Non-thinking models silently
+    // ignore `think`, so a stray value is harmless.
     const requestedEffort = opts && opts.reasoningEffort;
     const validEfforts = ['low', 'medium', 'high'];
-    const thinkLevel = isThinkingModel
-      ? (validEfforts.includes(requestedEffort) ? requestedEffort : 'medium')
-      : undefined;
+    const thinkLevel = validEfforts.includes(requestedEffort) ? requestedEffort : undefined;
 
     let response;
     try {

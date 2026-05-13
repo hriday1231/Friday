@@ -195,10 +195,12 @@ class ChatInterface {
     });
 
     // Reasoning-effort cycle: low → medium → high → low. Persisted to
-    // localStorage so the choice survives reloads. Visibility is gated by the
-    // selected model (see _updateEffortToggleVisibility).
+    // localStorage so the choice survives reloads. Visibility is gated by
+    // whether the active Ollama model declares the "thinking" capability
+    // (queried via electronAPI.getOllamaModelCapabilities, cached per model).
+    this._modelCapsCache = new Map();
     this._renderEffortToggle();
-    this._updateEffortToggleVisibility();
+    this._refreshEffortToggleForCurrentModel();
     this.effortToggleBtn?.addEventListener('click', () => {
       const order = ['low', 'medium', 'high'];
       const next = order[(order.indexOf(this._reasoningEffort) + 1) % order.length];
@@ -211,7 +213,7 @@ class ChatInterface {
       const prev = window.modelSelector.onModelChanged;
       window.modelSelector.onModelChanged = (...args) => {
         try { prev?.(...args); } catch {}
-        this._updateEffortToggleVisibility();
+        this._refreshEffortToggleForCurrentModel();
       };
     }
 
@@ -2455,13 +2457,34 @@ class ChatInterface {
   }
 
   // ── Reasoning-effort toggle ────────────────────────────────────────────────
-  // Only thinking-capable models (gpt-oss family) actually honor the `think`
-  // parameter. We keep the regex aligned with OllamaProvider.chatWithTools so
-  // the UI matches what the backend will actually send.
+  // Ollama models declare a `capabilities` list (completion / tools / thinking
+  // / vision / ...). We show the toggle iff the active model declares
+  // "thinking", queried via electronAPI.getOllamaModelCapabilities and cached
+  // per model name.
   _effortAppliesToCurrentModel() {
+    // Sync: returns the last-known result. Async refresh happens in
+    // _refreshEffortToggleForCurrentModel().
     const m = window.modelSelector?.currentModel || '';
     const t = window.modelSelector?.currentModelType || '';
-    return t === 'ollama' && /gpt-oss/i.test(m);
+    if (t !== 'ollama' || !m) return false;
+    const caps = this._modelCapsCache?.get(m);
+    return Array.isArray(caps) && caps.includes('thinking');
+  }
+
+  async _refreshEffortToggleForCurrentModel() {
+    if (!this._modelCapsCache) this._modelCapsCache = new Map();
+    const m = window.modelSelector?.currentModel || '';
+    const t = window.modelSelector?.currentModelType || '';
+    if (t !== 'ollama' || !m) { this._updateEffortToggleVisibility(); return; }
+    if (!this._modelCapsCache.has(m)) {
+      try {
+        const res = await window.electronAPI?.getOllamaModelCapabilities?.(m);
+        this._modelCapsCache.set(m, res?.capabilities || []);
+      } catch {
+        this._modelCapsCache.set(m, []);
+      }
+    }
+    this._updateEffortToggleVisibility();
   }
 
   _updateEffortToggleVisibility() {
