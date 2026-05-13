@@ -108,7 +108,7 @@ class AgentRuntime {
    * @param {boolean}        [opts.forceSearch]
    */
   async processMessage(message, modelName, context, opts = {}) {
-    const { images = [], display = null, forceSearch = false, incognito = false } = opts;
+    const { images = [], display = null, forceSearch = false, incognito = false, reasoningEffort = null } = opts;
     const { sessionId } = context;
 
     // Fresh abort controller for this turn
@@ -119,7 +119,7 @@ class AgentRuntime {
     try {
       const result = (forceSearch && !incognito)
         ? await this._runForceSearch(message, modelName, context, images, display)
-        : await this._runToolLoop(message, modelName, context, images, display, incognito);
+        : await this._runToolLoop(message, modelName, context, images, display, incognito, reasoningEffort);
 
       this._emit({ type: 'session.status', sessionId, status: 'idle' });
       return result;
@@ -162,7 +162,7 @@ class AgentRuntime {
 
   // ─── Core tool loop ──────────────────────────────────────────────────────────
 
-  async _runToolLoop(message, modelName, context, images, display, incognito = false) {
+  async _runToolLoop(message, modelName, context, images, display, incognito = false, reasoningEffort = null) {
     const { sessionId } = context;
     const appMode = 'chat';
     const excludeTools = incognito ? INCOGNITO_EXCLUDED_TOOLS : null;
@@ -241,7 +241,7 @@ class AgentRuntime {
       };
 
       // ── LLM call ──────────────────────────────────────────────��─────────────
-      const chatResult = await provider.chatWithTools(messages, modelName, onChunk, context.signal, appMode, { excludeTools });
+      const chatResult = await provider.chatWithTools(messages, modelName, onChunk, context.signal, appMode, { excludeTools, reasoningEffort });
       const { text, toolCalls } = chatResult;
 
       // Close streaming text part and emit update so renderer converts raw text → markdown

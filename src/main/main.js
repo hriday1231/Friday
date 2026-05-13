@@ -845,7 +845,7 @@ ipcMain.on('agent-permission-response', (_, { requestId, approved, alwaysAllow }
 const INCOGNITO_SESSION_ID = '__incognito__';
 
 ipcMain.handle('send-agent-message', async (event, data = {}) => {
-  const { message, displayMessage, model, modelType, sessionId: reqSessionId, images = [], forceSearch = false, incognito = false } = data;
+  const { message, displayMessage, model, modelType, sessionId: reqSessionId, images = [], forceSearch = false, incognito = false, reasoningEffort = null } = data;
   if (!agentRuntime || !model) return { success: false, error: 'AgentRuntime not ready' };
 
   const sessionId = incognito ? INCOGNITO_SESSION_ID : (reqSessionId || activeSessionId);
@@ -874,6 +874,7 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
       display: displayMessage ?? message,
       forceSearch,
       incognito,
+      reasoningEffort,
     });
     return { success: true, sessionId: incognito ? null : sessionId, result };
   } catch (err) {

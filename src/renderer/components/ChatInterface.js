@@ -139,6 +139,7 @@ class ChatInterface {
     this.sendBtn           = document.getElementById('sendBtn');
     this.clearChatBtn      = document.getElementById('clearChatBtn');
     this.searchToggleBtn   = document.getElementById('searchToggleBtn');
+    this.effortToggleBtn   = document.getElementById('effortToggleBtn');
     this.attachBtn         = document.getElementById('attachBtn');
     this.micBtn            = document.getElementById('micBtn');
     this.stopBtn           = document.getElementById('stopBtn');
@@ -152,6 +153,10 @@ class ChatInterface {
     this.previewStrip      = document.getElementById('imagePreviewStrip');
     this.visionWarning     = document.getElementById('visionWarning');
     this.forceSearch       = false;
+    // Reasoning effort for thinking-capable models (gpt-oss). UI toggle cycles
+    // low → medium → high; backend defaults to "medium" if we pass null.
+    this._reasoningEffort  = (typeof localStorage !== 'undefined' && localStorage.getItem('friday-reasoning-effort')) || 'medium';
+    if (!['low', 'medium', 'high'].includes(this._reasoningEffort)) this._reasoningEffort = 'medium';
     this._attachedImages   = []; // [{ data: base64, mimeType, name, previewUrl }]
     this._attachedDocs     = []; // pending for current message
     this._sessionDocs      = []; // docs kept in context for whole session
@@ -188,6 +193,27 @@ class ChatInterface {
       this.forceSearch = !this.forceSearch;
       this.searchToggleBtn?.classList.toggle('active', this.forceSearch);
     });
+
+    // Reasoning-effort cycle: low → medium → high → low. Persisted to
+    // localStorage so the choice survives reloads. Visibility is gated by the
+    // selected model (see _updateEffortToggleVisibility).
+    this._renderEffortToggle();
+    this._updateEffortToggleVisibility();
+    this.effortToggleBtn?.addEventListener('click', () => {
+      const order = ['low', 'medium', 'high'];
+      const next = order[(order.indexOf(this._reasoningEffort) + 1) % order.length];
+      this._reasoningEffort = next;
+      try { localStorage.setItem('friday-reasoning-effort', next); } catch {}
+      this._renderEffortToggle();
+    });
+    // Refresh visibility when the user switches models.
+    if (window.modelSelector) {
+      const prev = window.modelSelector.onModelChanged;
+      window.modelSelector.onModelChanged = (...args) => {
+        try { prev?.(...args); } catch {}
+        this._updateEffortToggleVisibility();
+      };
+    }
 
     this.userInput.addEventListener('input', () => {
       this.userInput.style.height = 'auto';
@@ -1273,6 +1299,7 @@ class ChatInterface {
         images: images.map(({ data, mimeType }) => ({ data, mimeType })),
         forceSearch: incognito ? false : this.forceSearch,
         incognito,
+        reasoningEffort: this._effortAppliesToCurrentModel() ? this._reasoningEffort : null,
       });
 
       this.forceSearch = false;
@@ -2425,6 +2452,31 @@ class ChatInterface {
   _setupToolConfirmation() {
     // No-op: all permission requests now come through AgentRuntime events.
     // Kept as a method for backward compat (called in constructor).
+  }
+
+  // ── Reasoning-effort toggle ────────────────────────────────────────────────
+  // Only thinking-capable models (gpt-oss family) actually honor the `think`
+  // parameter. We keep the regex aligned with OllamaProvider.chatWithTools so
+  // the UI matches what the backend will actually send.
+  _effortAppliesToCurrentModel() {
+    const m = window.modelSelector?.currentModel || '';
+    const t = window.modelSelector?.currentModelType || '';
+    return t === 'ollama' && /gpt-oss/i.test(m);
+  }
+
+  _updateEffortToggleVisibility() {
+    if (!this.effortToggleBtn) return;
+    this.effortToggleBtn.classList.toggle('hidden', !this._effortAppliesToCurrentModel());
+  }
+
+  _renderEffortToggle() {
+    if (!this.effortToggleBtn) return;
+    const label = { low: 'L', medium: 'M', high: 'H' }[this._reasoningEffort] || 'M';
+    const fullName = this._reasoningEffort.charAt(0).toUpperCase() + this._reasoningEffort.slice(1);
+    this.effortToggleBtn.dataset.effort = this._reasoningEffort;
+    this.effortToggleBtn.title = `Reasoning effort: ${fullName} — click to cycle (low / medium / high)`;
+    const labelEl = this.effortToggleBtn.querySelector('.effort-label');
+    if (labelEl) labelEl.textContent = label;
   }
 }
 

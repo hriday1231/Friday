@@ -70,12 +70,17 @@ class OllamaProvider extends BaseProvider {
     const tools = this.toolRegistry.getOllamaTools(excludeTools);
     const baseURL = OllamaService.baseURL;
 
-    // gpt-oss models default to medium-effort chain-of-thought reasoning before
-    // every answer. On simple prompts that costs hundreds of "thinking" tokens
-    // for no quality gain — a 10× perceived latency tax. Force low effort for
-    // gpt-oss family. Other models silently ignore the `think` field.
+    // gpt-oss is a thinking model: it accepts `think: "low"|"medium"|"high"`.
+    // The level can be passed per request via opts.reasoningEffort. Default is
+    // "medium" (matches the model's native default). Non-thinking models
+    // silently ignore the `think` field, so we still gate by model name to
+    // avoid sending it where it's noise.
     const isThinkingModel = /gpt-oss/i.test(modelName);
-    const thinkLevel = isThinkingModel ? 'low' : undefined;
+    const requestedEffort = opts && opts.reasoningEffort;
+    const validEfforts = ['low', 'medium', 'high'];
+    const thinkLevel = isThinkingModel
+      ? (validEfforts.includes(requestedEffort) ? requestedEffort : 'medium')
+      : undefined;
 
     let response;
     try {
