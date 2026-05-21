@@ -731,17 +731,27 @@ class ChatInterface {
     // Order matters: $$ before $, \[ before \(
     let s = text;
 
-    // Convert backtick-wrapped math to $...$ so KaTeX can render it.
-    // Matches `...` whose content looks like math: subscripts (_x / _{...}),
-    // superscripts (^x / ^{...}), LaTeX commands (\alpha), or Greek/math Unicode.
-    const MATH_IN_CODE = /[_^]\{|[_^][A-Za-z0-9]|\\[A-Za-z]+|\p{Script=Greek}|[∑∫∏√∞±×÷≤≥≠≈∈⊂⊃]/u;
+    // Heuristic: content between $...$ is math iff it contains a math-like
+    // signal — subscript/superscript, LaTeX command, Greek/math Unicode, or
+    // a math operator. This rejects currency amounts ($1.7 billion ... $10),
+    // which were previously matched as a single math block and rendered as
+    // an unbroken italic stream by KaTeX.
+    const MATH_LIKE = /[_^]\{|[_^][A-Za-z0-9]|\\[A-Za-z]+|\p{Script=Greek}|[∑∫∏√∞±×÷≤≥≠≈∈⊂⊃]/u;
     s = s.replace(/`([^`\n]{1,120})`/g, (match, inner) =>
-      MATH_IN_CODE.test(inner) ? `$${inner}$` : match
+      MATH_LIKE.test(inner) ? `$${inner}$` : match
     );
 
     s = s.replace(/\$\$([\s\S]*?)\$\$/g,  (_, m) => protect(m, true));
     s = s.replace(/\\\[([\s\S]*?)\\\]/g,   (_, m) => protect(m, true));
-    s = s.replace(/\$([^\$\n]+?)\$/g,       (_, m) => protect(m, false));
+    // Single-dollar inline math also needs the math-like check. Extra guard:
+    // a literal $ immediately followed by a digit and an English unit/word is
+    // almost certainly currency, so we refuse those even if MATH_LIKE matched
+    // a later character. Same for `$5 to $10` ranges.
+    s = s.replace(/\$([^\$\n]+?)\$/g, (full, inner) => {
+      if (!MATH_LIKE.test(inner))            return full;
+      if (/^\d[\d.,]*\s*(?:[a-z]|$)/i.test(inner.trim())) return full; // $1.7 billion / $5 USD
+      return protect(inner, false);
+    });
     s = s.replace(/\\\(([^]*?)\\\)/g,       (_, m) => protect(m, false));
 
     // Collapse 3+ blank lines → 1 blank line (keeps paragraph structure for

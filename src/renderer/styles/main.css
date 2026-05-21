@@ -1134,10 +1134,20 @@ body[data-incognito="on"] .chat-messages::before {
 /* ── Markdown tables inside messages ───────────────────────────────────── */
 .message-content-text table {
   width: 100%;
+  /* table-layout: fixed distributes width evenly. Without this, browsers
+     fall back to "auto" sizing, which gives 99% of the width to whichever
+     column has the longest unbroken string — squeezing the other columns
+     down to single-character widths and producing per-letter wrapping in
+     the headers. */
+  table-layout: fixed;
   border-collapse: collapse;
   margin: 8px 0;
   font-size: 12.5px;
   white-space: normal;
+  word-break: normal;
+  /* Break long unbreakable strings (URLs, currency-mashes, etc.) at any
+     point rather than overflowing the cell. */
+  overflow-wrap: anywhere;
 }
 .message-content-text th,
 .message-content-text td {
@@ -1145,6 +1155,8 @@ body[data-incognito="on"] .chat-messages::before {
   border: 1px solid var(--edge);
   text-align: left;
   vertical-align: top;
+  /* Apply the same wrap rules per-cell as a safety net for nested content. */
+  overflow-wrap: anywhere;
 }
 .message-content-text th {
   background: var(--s1);
