@@ -30,21 +30,25 @@ class PCMCaptureProcessor extends AudioWorkletProcessor {
 registerProcessor('wake-pcm-capture', PCMCaptureProcessor);
 `;
 
-const COMMAND_CAPTURE_MS = 4000; // how much audio to grab after wake fires
+// Command-capture parameters. We use VAD instead of a fixed window: as soon as
+// the user stops talking we end the capture, ship it to Whisper, and submit.
+const CMD_MAX_MS              = 6000;   // hard ceiling — safety net
+const CMD_NO_SPEECH_TIMEOUT   = 1500;   // give up if nothing audible after wake
+const CMD_SILENCE_END_MS      = 600;    // sustained silence after speech → end
+const CMD_RMS_SPEECH_THRESH   = 0.014;  // RMS above this counts as "speech"
+const CMD_VAD_POLL_MS         = 40;     // how often to check the rolling RMS
 
 class WakeWordDetector {
   /**
    * @param {object}   opts
    * @param {string[]} [opts.phrases]   - Phrase IDs (e.g., ['hey_jarvis']). First wins.
    * @param {Function} opts.onWake      - async (commandText: string) => void
-   * @param {number}   [opts.commandCaptureMs=4000]
    */
-  constructor({ phrases = ['hey_jarvis'], onWake, commandCaptureMs = COMMAND_CAPTURE_MS } = {}) {
+  constructor({ phrases = ['hey_jarvis'], onWake } = {}) {
     // The OpenWakeWord pipeline is one-phrase-at-a-time (each phrase is its
     // own ONNX model). We honor the first entry for backward-compat.
     this.phraseId        = (phrases[0] || 'hey_jarvis').toLowerCase().replace(/\s+/g, '_');
     this.onWake          = onWake || (() => {});
-    this.commandCaptureMs = commandCaptureMs;
 
     this._stream       = null;
     this._audioCtx     = null;
@@ -54,7 +58,8 @@ class WakeWordDetector {
     this._running      = false;
     this._capturingCmd = false;
     this._cmdFrames    = [];
-    this._cmdEndTimer  = null;
+    this._cmdVadTimer  = null;
+    this._cmdVadState  = null; // { startedAt, hasSpoken, silenceStart }
 
     this._unsubWake    = null;
   }
@@ -129,7 +134,8 @@ class WakeWordDetector {
   stop() {
     this._running = false;
     this._capturingCmd = false;
-    if (this._cmdEndTimer) { clearTimeout(this._cmdEndTimer); this._cmdEndTimer = null; }
+    if (this._cmdVadTimer) { clearTimeout(this._cmdVadTimer); this._cmdVadTimer = null; }
+    this._cmdVadState = null;
     try { this._unsubWake?.(); } catch {}
     this._unsubWake = null;
     window.electronAPI?.wakeWordStop?.().catch(() => {});
@@ -153,39 +159,97 @@ class WakeWordDetector {
 
   async _onWakeDetected(_data) {
     if (!this._running) return;
-    // Switch into post-wake command-capture mode for COMMAND_CAPTURE_MS.
+    // Switch into post-wake command-capture mode. End is decided by a tiny
+    // VAD running on the rolling RMS of the captured frames — see _vadTick.
     this._capturingCmd = true;
     this._cmdFrames = [];
-    this._running = false; // freeze wake-word stream while we capture command
+    this._running = false;
+    this._cmdVadState = {
+      startedAt:    Date.now(),
+      hasSpoken:    false,
+      silenceStart: null,
+    };
+    this._vadTick();
+  }
 
-    this._cmdEndTimer = setTimeout(async () => {
-      this._cmdEndTimer = null;
-      const frames = this._cmdFrames;
-      this._cmdFrames = [];
-      this._capturingCmd = false;
+  /**
+   * Poll the recent capture buffer ~25 times/sec, deciding when to stop.
+   *   1. If we never hear speech within CMD_NO_SPEECH_TIMEOUT → bail.
+   *   2. Once speech is detected, end on CMD_SILENCE_END_MS of sustained quiet.
+   *   3. Hard ceiling at CMD_MAX_MS (safety net for noisy environments).
+   */
+  _vadTick() {
+    if (!this._capturingCmd || !this._cmdVadState) return;
+    const state = this._cmdVadState;
+    const elapsed = Date.now() - state.startedAt;
 
-      let commandText = '';
+    // Compute RMS over the most recent ~80 ms of captured audio.
+    let energy = 0, count = 0;
+    // Frames are 128-sample chunks (~8 ms each); take last 10 ≈ 80 ms.
+    const tail = this._cmdFrames.slice(-10);
+    for (const f of tail) {
+      for (let i = 0; i < f.length; i++) { energy += f[i] * f[i]; count++; }
+    }
+    const rms = count > 0 ? Math.sqrt(energy / count) : 0;
+    const speakingNow = rms > CMD_RMS_SPEECH_THRESH;
+
+    let done = false;
+    let reason = '';
+
+    if (elapsed >= CMD_MAX_MS) {
+      done = true; reason = 'max-time';
+    } else if (!state.hasSpoken) {
+      if (speakingNow) { state.hasSpoken = true; state.silenceStart = null; }
+      else if (elapsed >= CMD_NO_SPEECH_TIMEOUT) { done = true; reason = 'no-speech'; }
+    } else {
+      // Already heard speech — watching for end-of-utterance silence.
+      if (speakingNow) {
+        state.silenceStart = null;
+      } else {
+        if (state.silenceStart === null) state.silenceStart = Date.now();
+        else if (Date.now() - state.silenceStart >= CMD_SILENCE_END_MS) {
+          done = true; reason = 'silence';
+        }
+      }
+    }
+
+    if (done) {
+      console.log(`[WakeWord] command capture ended (${reason}, ${elapsed}ms, spoke=${state.hasSpoken})`);
+      this._cmdVadTimer = null;
+      this._cmdVadState = null;
+      this._finishCommandCapture(state.hasSpoken);
+    } else {
+      this._cmdVadTimer = setTimeout(() => this._vadTick(), CMD_VAD_POLL_MS);
+    }
+  }
+
+  async _finishCommandCapture(hadSpeech) {
+    const frames = this._cmdFrames;
+    this._cmdFrames = [];
+    this._capturingCmd = false;
+
+    let commandText = '';
+    // Skip STT entirely if we never heard speech — saves whisper-cli launch + ~300ms.
+    if (hadSpeech) {
       try {
         const wav = WakeWordDetector._encodeWav(frames, 16000);
         const result = await window.electronAPI?.transcribeAudio?.(wav, 'audio/wav');
-        if (result?.success && result.transcript) {
-          commandText = result.transcript.trim();
-        }
+        if (result?.success && result.transcript) commandText = result.transcript.trim();
       } catch (err) {
         console.warn('[WakeWord] post-wake transcription failed:', err.message);
       }
+    }
 
-      try { await this.onWake(commandText); }
-      catch (err) { console.warn('[WakeWord] onWake threw:', err.message); }
+    try { await this.onWake(commandText); }
+    catch (err) { console.warn('[WakeWord] onWake threw:', err.message); }
 
-      // Re-arm wake detection in main.
-      try {
-        const startRes = await window.electronAPI?.wakeWordStart?.(this.phraseId);
-        if (startRes?.success) this._running = true;
-      } catch (err) {
-        console.warn('[WakeWord] re-arm failed:', err.message);
-      }
-    }, this.commandCaptureMs);
+    // Re-arm wake detection in main.
+    try {
+      const startRes = await window.electronAPI?.wakeWordStart?.(this.phraseId);
+      if (startRes?.success) this._running = true;
+    } catch (err) {
+      console.warn('[WakeWord] re-arm failed:', err.message);
+    }
   }
 
   _cleanup() {

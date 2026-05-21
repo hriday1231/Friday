@@ -54,26 +54,33 @@ class WakeWordService {
    * @param {number}   [opts.threshold=0.5]   – Wake probability threshold
    * @param {number}   [opts.cooldownMs=2000] – Min ms between wake events
    */
-  constructor({ modelDir, onWake, threshold = 0.35, cooldownMs = 1500 } = {}) {
-    this.modelDir   = modelDir;
-    this.onWake     = onWake || (() => {});
-    this.threshold  = threshold;
-    this.cooldownMs = cooldownMs;
+  constructor({ modelDir, onWake, threshold = 0.40, strongThreshold = 0.55, cooldownMs = 1500 } = {}) {
+    this.modelDir         = modelDir;
+    this.onWake           = onWake || (() => {});
+    // Dual-threshold detection (see _processChunk):
+    //   - strongThreshold: any single chunk above this fires immediately.
+    //   - threshold:       sustained for 2+ consecutive chunks → also fires.
+    // This combo keeps "instant" latency on clear utterances while filtering
+    // out single-frame noise spikes that would have tripped a single-threshold.
+    this.threshold        = threshold;
+    this.strongThreshold  = strongThreshold;
+    this.cooldownMs       = cooldownMs;
 
     this._melsec        = null;
     this._embedding     = null;
     this._wake          = null;
     this._phraseId      = null;
     this._loaded        = false;
-    this._loading       = null; // Promise for in-flight load
+    this._loading       = null;
     this._paused        = false;
 
     // Streaming buffers
     this._audioBuf = new Int16Array(0);
     this._melBuf   = [];   // each entry: Float32Array(32)
     this._embBuf   = [];   // each entry: Float32Array(96)
+    this._lastProb   = 0;  // remembered for the 2-frame sustained rule
     this._lastWakeAt = 0;
-    this._pendingRun = false; // re-entrancy guard
+    this._pendingRun = false;
   }
 
   static get PHRASES() { return PHRASE_MODELS; }
@@ -146,6 +153,7 @@ class WakeWordService {
     this._audioBuf = new Int16Array(0);
     this._melBuf   = [];
     this._embBuf   = [];
+    this._lastProb = 0;
     this._lastWakeAt = 0;
   }
 
@@ -262,14 +270,21 @@ class WakeWordService {
       console.log(`[WakeWord] p=${prob.toFixed(3)}`);
     }
 
-    if (prob > this.threshold) {
+    // Dual-threshold trigger:
+    //   - prob > strongThreshold     → fire on this single chunk (fastest path)
+    //   - prob > threshold for 2 in a row → fire (catches sustained but weaker signals)
+    // Filters out single-frame noise blips that just happen to clear the
+    // lower threshold for one ~80 ms window.
+    const sustained = (prob > this.threshold) && (this._lastProb > this.threshold);
+    const strong    = prob > this.strongThreshold;
+    this._lastProb  = prob;
+
+    if (strong || sustained) {
       const now = Date.now();
       if (now - this._lastWakeAt > this.cooldownMs) {
         this._lastWakeAt = now;
-        // Note: we deliberately do NOT clear _melBuf or _embBuf here.
-        // The cooldown timer alone prevents re-fires, and keeping the buffers
-        // primed means we don't pay the ~2.5 s bootstrap cost again.
-        console.log(`[WakeWord] DETECTED "${PHRASE_MODELS[this._phraseId].display}" (p=${prob.toFixed(3)})`);
+        const why = strong ? 'strong' : 'sustained';
+        console.log(`[WakeWord] DETECTED "${PHRASE_MODELS[this._phraseId].display}" (p=${prob.toFixed(3)}, ${why})`);
         try { this.onWake(prob); } catch (e) { console.error('[WakeWord] onWake threw:', e.message); }
       }
     }
