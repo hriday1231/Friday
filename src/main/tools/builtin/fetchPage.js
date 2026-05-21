@@ -39,10 +39,11 @@ const declaration = {
   }
 };
 
-const MAX_CHARS     = 10_000;
-const MAX_RAW_BYTES = 500_000;
-const TIMEOUT_MS    = 15_000;
-const MAX_REDIRECTS = 5;
+const MAX_CHARS         = 10_000;
+const MAX_RAW_BYTES     = 500_000;
+const TOTAL_DEADLINE_MS = 12_000;   // absolute cap on wall-clock time for the entire fetch
+const SOCKET_IDLE_MS    = 8_000;    // disconnect if no bytes arrive for this long
+const MAX_REDIRECTS     = 5;
 
 const BLOCKED_HOSTNAMES = new Set([
   'localhost',
@@ -153,70 +154,100 @@ function _isTextContentType(ct) {
 }
 
 function fetchRaw(url, redirectsLeft = MAX_REDIRECTS, signal = null) {
-  return new Promise(async (resolve, reject) => {
-    if (redirectsLeft <= 0) return reject(new Error('Too many redirects'));
-    if (signal?.aborted) return reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+  return new Promise((resolve, reject) => {
+    // ── Lifecycle plumbing ──────────────────────────────────────────────────
+    // Everything below routes through done() so we resolve / reject exactly
+    // once and always tear down the timer + abort listener. The previous
+    // version attached the abort listener inside the response callback, which
+    // meant a server that hung BEFORE sending any headers couldn't be cancelled
+    // — the Stop button effectively did nothing for the first ~15 s.
+    let settled = false;
+    let req = null;
+    const overallTimer = setTimeout(() => {
+      done(new Error(`Request timed out after ${TOTAL_DEADLINE_MS}ms: ${url}`));
+    }, TOTAL_DEADLINE_MS);
+    const onAbort = () => {
+      done(Object.assign(new Error('Aborted by user'), { name: 'AbortError' }));
+    };
+    if (signal) signal.addEventListener?.('abort', onAbort, { once: true });
 
-    let targetUrl;
-    try { targetUrl = await _assertSafeUrl(url); }
-    catch (e) { return reject(e); }
+    function done(err, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(overallTimer);
+      if (signal) signal.removeEventListener?.('abort', onAbort);
+      try { req?.destroy(); } catch {}
+      if (err) reject(err); else resolve(value);
+    }
 
-    const client = targetUrl.protocol === 'https:' ? https : http;
-    const req = client.get(url, {
-      headers: {
-        'User-Agent':       'Mozilla/5.0 (compatible; Friday/1.0; +https://friday.local)',
-        'Accept':           'text/html,application/xhtml+xml,text/plain',
-        'Accept-Encoding':  'gzip, deflate, br',
-      }
-    }, (res) => {
-      // Follow redirects (with re-validation of the target)
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        const next = new URL(res.headers.location, url).href;
-        return fetchRaw(next, redirectsLeft - 1, signal).then(resolve).catch(reject);
-      }
+    // Honor abort + redirect-budget BEFORE we even open a socket.
+    if (redirectsLeft <= 0) return done(new Error('Too many redirects'));
+    if (signal?.aborted) return done(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
 
-      if (res.statusCode >= 400) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode}: ${url}`));
-      }
+    // ── DNS + SSRF check, then request ──────────────────────────────────────
+    (async () => {
+      let targetUrl;
+      try { targetUrl = await _assertSafeUrl(url); }
+      catch (e) { return done(e); }
+      if (settled) return; // aborted while DNS was in flight
 
-      const ct = res.headers['content-type'];
-      if (!_isTextContentType(ct)) {
-        res.resume();
-        return resolve({ html: `(non-text content: ${ct || 'unknown'})`, status: res.statusCode });
-      }
+      const client = targetUrl.protocol === 'https:' ? https : http;
+      req = client.get(url, {
+        headers: {
+          'User-Agent':       'Mozilla/5.0 (compatible; Friday/1.0; +https://friday.local)',
+          'Accept':           'text/html,application/xhtml+xml,text/plain',
+          'Accept-Encoding':  'gzip, deflate, br',
+        }
+      }, (res) => {
+        if (settled) { res.resume(); return; }
 
-      const enc = String(res.headers['content-encoding'] || '').toLowerCase();
-      let stream = res;
-      if      (enc === 'gzip')    stream = res.pipe(zlib.createGunzip());
-      else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
-      else if (enc === 'br')      stream = res.pipe(zlib.createBrotliDecompress());
+        // Follow redirects (each new hop revalidates the host via _assertSafeUrl).
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          // Hand off to a fresh promise — but mark this one settled first so
+          // our timer + abort listener get cleaned up. The fresh fetchRaw call
+          // re-attaches its own abort listener under the same signal.
+          settled = true;
+          clearTimeout(overallTimer);
+          if (signal) signal.removeEventListener?.('abort', onAbort);
+          const next = new URL(res.headers.location, url).href;
+          return fetchRaw(next, redirectsLeft - 1, signal).then(resolve).catch(reject);
+        }
+        if (res.statusCode >= 400) {
+          res.resume();
+          return done(new Error(`HTTP ${res.statusCode}: ${url}`));
+        }
 
-      const chunks = [];
-      let total = 0;
+        const ct = res.headers['content-type'];
+        if (!_isTextContentType(ct)) {
+          res.resume();
+          return done(null, { html: `(non-text content: ${ct || 'unknown'})`, status: res.statusCode });
+        }
 
-      const onAbort = () => { req.destroy(new Error('Aborted')); };
-      if (signal) signal.addEventListener?.('abort', onAbort, { once: true });
+        const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+        let stream = res;
+        if      (enc === 'gzip')    stream = res.pipe(zlib.createGunzip());
+        else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
+        else if (enc === 'br')      stream = res.pipe(zlib.createBrotliDecompress());
 
-      stream.on('data', (chunk) => {
-        total += chunk.length;
-        chunks.push(chunk);
-        if (total >= MAX_RAW_BYTES) req.destroy(); // got enough
+        const chunks = [];
+        let total = 0;
+        stream.on('data', (chunk) => {
+          total += chunk.length;
+          chunks.push(chunk);
+          if (total >= MAX_RAW_BYTES) req.destroy(); // got enough → tear down
+        });
+        stream.on('end',   () => done(null, { html: Buffer.concat(chunks).toString('utf8'), status: res.statusCode }));
+        stream.on('error', (err) => done(err));
       });
 
-      stream.on('end', () => {
-        signal?.removeEventListener?.('abort', onAbort);
-        resolve({ html: Buffer.concat(chunks).toString('utf8'), status: res.statusCode });
+      req.on('error', (err) => done(err));
+      // Socket-level idle timeout (server went quiet mid-response).
+      // Belt-and-suspenders alongside the absolute deadline above.
+      req.setTimeout(SOCKET_IDLE_MS, () => {
+        done(new Error(`No data for ${SOCKET_IDLE_MS}ms: ${url}`));
       });
-      stream.on('error', (err) => {
-        signal?.removeEventListener?.('abort', onAbort);
-        reject(err);
-      });
-    });
-
-    req.on('error', reject);
-    req.setTimeout(TIMEOUT_MS, () => { req.destroy(); reject(new Error('Request timed out')); });
+    })().catch(done);
   });
 }
 
@@ -229,6 +260,11 @@ async function handler(args, _onStream, signal) {
   try {
     ({ html, status } = await fetchRaw(url, MAX_REDIRECTS, signal));
   } catch (err) {
+    // Distinguish user-cancel from real failures so the LLM doesn't apologize
+    // for a fetch we intentionally killed.
+    if (err?.name === 'AbortError' || signal?.aborted) {
+      return `[fetch_page cancelled by user: ${url}]`;
+    }
     return `Failed to fetch ${url}: ${err.message}`;
   }
 
