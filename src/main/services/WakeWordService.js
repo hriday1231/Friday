@@ -31,9 +31,13 @@ const SAMPLE_RATE      = 16000;
 const CHUNK_SAMPLES    = 1280;   // 80 ms @ 16 kHz
 const MEL_DIM          = 32;     // mel frames are 32-dim
 const EMB_WINDOW       = 76;     // embedding model expects 76 mel frames
-const EMB_STRIDE       = 8;      // shift the 76-frame window by 8 between calls
 const EMB_DIM          = 96;     // embeddings are 96-dim
 const WAKE_WINDOW      = 16;     // wake model expects 16 embeddings
+// Each 80ms chunk produces FRAMES_PER_CHUNK new mel frames (measured: 5 on the
+// stock openWakeWord v0.5.1 melspec model). The embedding window slides by this
+// many frames per chunk, so we get exactly one new embedding per chunk in
+// steady state — and one wake check per 80 ms.
+const FRAMES_PER_CHUNK = 5;
 
 const PHRASE_MODELS = {
   hey_jarvis:  { file: 'hey_jarvis_v0.1.onnx',  display: 'Hey Jarvis'  },
@@ -50,7 +54,7 @@ class WakeWordService {
    * @param {number}   [opts.threshold=0.5]   – Wake probability threshold
    * @param {number}   [opts.cooldownMs=2000] – Min ms between wake events
    */
-  constructor({ modelDir, onWake, threshold = 0.5, cooldownMs = 2000 } = {}) {
+  constructor({ modelDir, onWake, threshold = 0.35, cooldownMs = 1500 } = {}) {
     this.modelDir   = modelDir;
     this.onWake     = onWake || (() => {});
     this.threshold  = threshold;
@@ -96,12 +100,33 @@ class WakeWordService {
         this._phraseId  = phraseId;
         this._loaded    = true;
         this.reset();
-        console.log(`[WakeWord] Loaded models for "${PHRASE_MODELS[phraseId].display}"`);
+        // Pre-warm: run ~2.5 s of silence through the pipeline so the mel +
+        // embedding buffers are already full when the user starts speaking.
+        // Without this, the first detection has to wait ~2.5 s for buffers to
+        // fill — that's what made the test button feel sluggish on first try.
+        await this._prewarm();
+        console.log(`[WakeWord] Loaded "${PHRASE_MODELS[phraseId].display}", buffers pre-warmed`);
       } finally {
         this._loading = null;
       }
     })();
     await this._loading;
+  }
+
+  async _prewarm() {
+    // Push 2.5 s of zero audio through processing so buffers fill up. We
+    // suppress the onWake callback during this — we don't want a spurious
+    // detection on synthetic silence (and the threshold should prevent it
+    // anyway, but defensive is cheap).
+    const realOnWake = this.onWake;
+    this.onWake = () => {};
+    try {
+      const silence = new Float32Array(SAMPLE_RATE * 2.5);
+      await this.pushAudio(silence);
+    } finally {
+      this.onWake = realOnWake;
+      this._lastWakeAt = 0; // make sure cooldown isn't holding from pre-warm
+    }
   }
 
   unload() {
@@ -162,22 +187,22 @@ class WakeWordService {
   // ── Internals ──────────────────────────────────────────────────────────────
 
   async _processChunk(int16Chunk) {
-    // 1. Melspectrogram — input: int16-as-float32, shape [1, N]
+    // ── 1. Melspectrogram ──────────────────────────────────────────────────
+    // Input: int16 cast to float32, shape [1, N]. Output: [1, 1, F, 32] where
+    // F = FRAMES_PER_CHUNK (5) for the stock 80 ms input.
     const chunkF32 = new Float32Array(int16Chunk.length);
     for (let i = 0; i < int16Chunk.length; i++) chunkF32[i] = int16Chunk[i];
-    const melTensor = new ort.Tensor('float32', chunkF32, [1, int16Chunk.length]);
-
     let melOut;
     try {
-      melOut = await this._melsec.run({ input: melTensor });
+      melOut = await this._melsec.run({
+        input: new ort.Tensor('float32', chunkF32, [1, int16Chunk.length]),
+      });
     } catch (err) {
       console.warn('[WakeWord] melspec inference failed:', err.message);
       return;
     }
-    // Output shape can be [1, 1, F, 32] or [1, F, 32]. Normalize.
     const melResult = melOut.output;
-    const dims = melResult.dims;
-    const F = dims[dims.length - 2];   // mel frames
+    const F = melResult.dims[melResult.dims.length - 2];
     const melData = melResult.data;
     // OpenWakeWord normalizes mel features as (mel / 10) + 2 before embedding.
     for (let f = 0; f < F; f++) {
@@ -185,71 +210,67 @@ class WakeWordService {
       for (let i = 0; i < MEL_DIM; i++) frame[i] = (melData[f * MEL_DIM + i] / 10) + 2;
       this._melBuf.push(frame);
     }
-    // Trim mel buffer — keep enough for future embedding windows.
-    if (this._melBuf.length > EMB_WINDOW + EMB_STRIDE * 4) {
-      this._melBuf.splice(0, this._melBuf.length - (EMB_WINDOW + EMB_STRIDE * 4));
+    // Keep just enough history for one embedding window plus a little slack.
+    while (this._melBuf.length > EMB_WINDOW + FRAMES_PER_CHUNK * 2) this._melBuf.shift();
+
+    // ── 2. Embedding ───────────────────────────────────────────────────────
+    // Run exactly once per chunk on the latest 76 frames. This matches the
+    // openWakeWord reference behavior: each new 80 ms of audio produces one
+    // new embedding (the 76-frame window slides forward by FRAMES_PER_CHUNK).
+    if (this._melBuf.length < EMB_WINDOW) return;
+    const start = this._melBuf.length - EMB_WINDOW;
+    const embInput = new Float32Array(EMB_WINDOW * MEL_DIM);
+    for (let f = 0; f < EMB_WINDOW; f++) {
+      const frame = this._melBuf[start + f];
+      for (let i = 0; i < MEL_DIM; i++) embInput[f * MEL_DIM + i] = frame[i];
+    }
+    let embOut;
+    try {
+      embOut = await this._embedding.run({
+        input_1: new ort.Tensor('float32', embInput, [1, EMB_WINDOW, MEL_DIM, 1]),
+      });
+    } catch (err) {
+      console.warn('[WakeWord] embedding inference failed:', err.message);
+      return;
+    }
+    const embData = embOut.conv2d_19.data;
+    const emb = new Float32Array(EMB_DIM);
+    for (let i = 0; i < EMB_DIM; i++) emb[i] = embData[i];
+    this._embBuf.push(emb);
+    while (this._embBuf.length > WAKE_WINDOW) this._embBuf.shift();
+
+    // ── 3. Wake check ──────────────────────────────────────────────────────
+    if (this._embBuf.length < WAKE_WINDOW) return;
+    const wakeInput = new Float32Array(WAKE_WINDOW * EMB_DIM);
+    for (let e = 0; e < WAKE_WINDOW; e++) {
+      const emb_e = this._embBuf[e];
+      for (let i = 0; i < EMB_DIM; i++) wakeInput[e * EMB_DIM + i] = emb_e[i];
+    }
+    let wakeOut;
+    try {
+      wakeOut = await this._wake.run({
+        'x.1': new ort.Tensor('float32', wakeInput, [1, WAKE_WINDOW, EMB_DIM]),
+      });
+    } catch (err) {
+      console.warn('[WakeWord] wake-word inference failed:', err.message);
+      return;
+    }
+    const outKey = Object.keys(wakeOut)[0];
+    const prob = wakeOut[outKey].data[0];
+
+    if (process.env.WAKE_DEBUG && prob > 0.05) {
+      console.log(`[WakeWord] p=${prob.toFixed(3)}`);
     }
 
-    // 2. Embedding — only run when we have ≥ EMB_WINDOW mel frames; advance the
-    //    window by EMB_STRIDE per embedding so we don't redo all 76 every call.
-    while (this._melBuf.length >= EMB_WINDOW) {
-      const window = this._melBuf.slice(this._melBuf.length - EMB_WINDOW);
-      const embInput = new Float32Array(EMB_WINDOW * MEL_DIM);
-      for (let f = 0; f < EMB_WINDOW; f++) {
-        const frame = window[f];
-        for (let i = 0; i < MEL_DIM; i++) embInput[f * MEL_DIM + i] = frame[i];
-      }
-      const embTensor = new ort.Tensor('float32', embInput, [1, EMB_WINDOW, MEL_DIM, 1]);
-      let embOut;
-      try {
-        embOut = await this._embedding.run({ input_1: embTensor });
-      } catch (err) {
-        console.warn('[WakeWord] embedding inference failed:', err.message);
-        return;
-      }
-      const embResult = embOut.conv2d_19;
-      const embData = embResult.data;
-      const emb = new Float32Array(EMB_DIM);
-      for (let i = 0; i < EMB_DIM; i++) emb[i] = embData[i];
-      this._embBuf.push(emb);
-      if (this._embBuf.length > WAKE_WINDOW * 2) this._embBuf.splice(0, this._embBuf.length - WAKE_WINDOW * 2);
-
-      // Advance the mel window by EMB_STRIDE frames so the next embedding is
-      // shifted forward. Removes the oldest EMB_STRIDE frames from the buffer.
-      this._melBuf.splice(0, EMB_STRIDE);
-
-      // 3. Wake-word — runs over the rolling 16-embedding window.
-      if (this._embBuf.length >= WAKE_WINDOW) {
-        const wakeWindow = this._embBuf.slice(this._embBuf.length - WAKE_WINDOW);
-        const wakeInput = new Float32Array(WAKE_WINDOW * EMB_DIM);
-        for (let e = 0; e < WAKE_WINDOW; e++) {
-          const emb_e = wakeWindow[e];
-          for (let i = 0; i < EMB_DIM; i++) wakeInput[e * EMB_DIM + i] = emb_e[i];
-        }
-        const wakeTensor = new ort.Tensor('float32', wakeInput, [1, WAKE_WINDOW, EMB_DIM]);
-        let wakeOut;
-        try {
-          // Try common output keys — varies by model; "x.1" is the documented input.
-          wakeOut = await this._wake.run({ 'x.1': wakeTensor });
-        } catch (err) {
-          console.warn('[WakeWord] wake-word inference failed:', err.message);
-          return;
-        }
-        const outKey = Object.keys(wakeOut)[0];
-        const prob = wakeOut[outKey].data[0];
-
-        if (prob > this.threshold) {
-          const now = Date.now();
-          if (now - this._lastWakeAt > this.cooldownMs) {
-            this._lastWakeAt = now;
-            // Reset state so we don't re-fire on the trailing context.
-            this._embBuf = [];
-            this._melBuf = [];
-            console.log(`[WakeWord] DETECTED "${PHRASE_MODELS[this._phraseId].display}" (p=${prob.toFixed(3)})`);
-            try { this.onWake(prob); } catch (e) { console.error('[WakeWord] onWake threw:', e.message); }
-            return; // drop out of the inner loop; rest of chunk handled next call
-          }
-        }
+    if (prob > this.threshold) {
+      const now = Date.now();
+      if (now - this._lastWakeAt > this.cooldownMs) {
+        this._lastWakeAt = now;
+        // Note: we deliberately do NOT clear _melBuf or _embBuf here.
+        // The cooldown timer alone prevents re-fires, and keeping the buffers
+        // primed means we don't pay the ~2.5 s bootstrap cost again.
+        console.log(`[WakeWord] DETECTED "${PHRASE_MODELS[this._phraseId].display}" (p=${prob.toFixed(3)})`);
+        try { this.onWake(prob); } catch (e) { console.error('[WakeWord] onWake threw:', e.message); }
       }
     }
   }

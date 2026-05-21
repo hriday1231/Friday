@@ -79,16 +79,31 @@ class WakeWordDetector {
       this._captureNode.connect(this._silencer);
       this._silencer.connect(this._audioCtx.destination);
 
-      this._captureNode.port.onmessage = (e) => {
+      // Frames from the worklet arrive as 128-sample Float32Array chunks
+      // (~8 ms each, one per render quantum). 125 IPC sends/sec is wasteful;
+      // we accumulate 10 frames at a time so we ship one ~80 ms chunk per
+      // send — matching the wake-word service's processing granularity and
+      // cutting IPC traffic by ~10×.
+      const BATCH_FRAMES = 10;       // 10 * 128 samples = 1280 samples = 80 ms @ 16 kHz
+      let batchBuf = [];
+      let batchLen = 0;
+      this._captureNode.port.onmessage = (ev) => {
         if (!this._running) return;
-        const frame = e.data;
-        // While recording a post-wake command clip, accumulate frames locally
-        // and don't ship them to wake-word inference (we're past the wake).
+        const frame = ev.data;
         if (this._capturingCmd) {
+          // Post-wake command capture: keep frames in renderer for WAV encoding.
           this._cmdFrames.push(frame);
-        } else {
-          // Stream to main process for ONNX inference.
-          try { window.electronAPI?.wakeWordPushAudio?.(frame); } catch {}
+          return;
+        }
+        batchBuf.push(frame);
+        batchLen += frame.length;
+        if (batchBuf.length >= BATCH_FRAMES) {
+          const merged = new Float32Array(batchLen);
+          let off = 0;
+          for (const f of batchBuf) { merged.set(f, off); off += f.length; }
+          batchBuf = [];
+          batchLen = 0;
+          try { window.electronAPI?.wakeWordPushAudio?.(merged); } catch {}
         }
       };
 
