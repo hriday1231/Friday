@@ -149,6 +149,8 @@ class ChatInterface {
     this._whisperStream    = null;
     this._whisperWorklet   = null;
     this._whisperChunks    = null;
+    this._whisperVadTimer  = null;   // VAD polling handle
+    this._whisperVadState  = null;   // { startedAt, hasSpoken, silenceStart }
     this.imageInput        = document.getElementById('imageInput');
     this.previewStrip      = document.getElementById('imagePreviewStrip');
     this.visionWarning     = document.getElementById('visionWarning');
@@ -793,6 +795,19 @@ class ChatInterface {
   }
 
   // ── Voice input ───────────────────────────────────────────────────────────
+  //
+  // VAD parameters for the manual-mic Whisper path. Identical strategy to the
+  // post-wake VAD in wakeWord.js, with slightly more generous timeouts since
+  // the user explicitly opened the mic and may dictate longer thoughts.
+  static get VOICE_VAD() {
+    return {
+      RMS_SPEECH_THRESH:  0.014,   // RMS above this counts as "speech"
+      NO_SPEECH_TIMEOUT:  4000,    // give up if nothing audible after start
+      SILENCE_END_MS:     800,     // sustained silence after speech → auto-stop
+      MAX_MS:             30000,   // safety ceiling (long dictations)
+      POLL_MS:            40,      // rolling RMS check cadence
+    };
+  }
 
   _toggleVoice() {
     if (this._isListening) {
@@ -885,9 +900,73 @@ class ChatInterface {
 
     this.micBtn?.classList.add('recording');
     this.micBtn?.setAttribute('title', 'Recording… click, Ctrl+Shift+M, or ESC to stop');
+
+    // Kick off auto-stop VAD: it polls the rolling RMS of `chunks`, and ends
+    // the recording when the user stops talking. Without this the user has to
+    // manually click again — annoying, especially in the wake-word fallback.
+    this._whisperVadState = {
+      startedAt:    Date.now(),
+      hasSpoken:    false,
+      silenceStart: null,
+    };
+    this._scheduleWhisperVadTick(120); // small initial delay so frames accumulate
+  }
+
+  _scheduleWhisperVadTick(ms) {
+    if (this._whisperVadTimer) clearTimeout(this._whisperVadTimer);
+    this._whisperVadTimer = setTimeout(() => this._whisperVadTick(), ms);
+  }
+
+  _whisperVadTick() {
+    this._whisperVadTimer = null;
+    if (!this._isListening || !this._whisperVadState) return;
+    const state = this._whisperVadState;
+    const cfg   = ChatInterface.VOICE_VAD;
+    const elapsed = Date.now() - state.startedAt;
+
+    // Compute RMS over the most recent ~80 ms of captured audio.
+    const chunks = this._whisperChunks || [];
+    const tail = chunks.slice(-10);
+    let energy = 0, count = 0;
+    for (const f of tail) {
+      for (let i = 0; i < f.length; i++) { energy += f[i] * f[i]; count++; }
+    }
+    const rms = count > 0 ? Math.sqrt(energy / count) : 0;
+    const speakingNow = rms > cfg.RMS_SPEECH_THRESH;
+
+    let stop = false;
+    let reason = '';
+    if (elapsed >= cfg.MAX_MS) {
+      stop = true; reason = 'max-time';
+    } else if (!state.hasSpoken) {
+      if (speakingNow) { state.hasSpoken = true; state.silenceStart = null; }
+      else if (elapsed >= cfg.NO_SPEECH_TIMEOUT) { stop = true; reason = 'no-speech'; }
+    } else {
+      if (speakingNow) {
+        state.silenceStart = null;
+      } else {
+        if (state.silenceStart === null) state.silenceStart = Date.now();
+        else if (Date.now() - state.silenceStart >= cfg.SILENCE_END_MS) {
+          stop = true; reason = 'silence';
+        }
+      }
+    }
+
+    if (stop) {
+      console.log(`[Voice] auto-stop (${reason}, ${elapsed}ms, spoke=${state.hasSpoken})`);
+      this._whisperVadState = null;
+      // _stopVoice → _stopWhisperRecording flushes audio to whisper-cli.
+      this._stopVoice();
+      return;
+    }
+    this._scheduleWhisperVadTick(cfg.POLL_MS);
   }
 
   async _stopWhisperRecording() {
+    // Cancel any pending VAD tick first so it doesn't double-fire.
+    if (this._whisperVadTimer) { clearTimeout(this._whisperVadTimer); this._whisperVadTimer = null; }
+    this._whisperVadState = null;
+
     const ctx    = this._whisperCtx;
     const stream = this._whisperStream;
     const chunks = this._whisperChunks;
@@ -1037,6 +1116,8 @@ class ChatInterface {
 
   _resetMicState() {
     this._isListening = false;
+    if (this._whisperVadTimer) { clearTimeout(this._whisperVadTimer); this._whisperVadTimer = null; }
+    this._whisperVadState = null;
     this.micBtn?.classList.remove('recording', 'transcribing');
     this.micBtn?.setAttribute('title', 'Voice input (click or Ctrl+Shift+M to start / stop)');
     // Whisper / Web-Speech released the mic — let wake word resume listening.
