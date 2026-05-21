@@ -233,8 +233,18 @@ class ChatInterface {
     // Mic button — voice input
     this.micBtn?.addEventListener('click', () => this._toggleVoice());
 
-    // ESC cancels recording
+    // Keyboard shortcuts for voice input:
+    //   Ctrl+Shift+M — toggle recording (start if idle, stop if listening)
+    //   Esc         — stop recording (only while listening)
     document.addEventListener('keydown', (e) => {
+      // Mic toggle. Use e.code so it works regardless of keyboard layout +
+      // doesn't care about caps lock. Match Ctrl+Shift+M precisely so we
+      // don't intercept other M-shortcuts.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyM') {
+        e.preventDefault();
+        this._toggleVoice();
+        return;
+      }
       if (e.key === 'Escape' && this._isListening) this._stopVoice();
     });
 
@@ -874,7 +884,7 @@ class ChatInterface {
     this._isListening   = true;
 
     this.micBtn?.classList.add('recording');
-    this.micBtn?.setAttribute('title', 'Recording… click or ESC to stop');
+    this.micBtn?.setAttribute('title', 'Recording… click, Ctrl+Shift+M, or ESC to stop');
   }
 
   async _stopWhisperRecording() {
@@ -1003,7 +1013,7 @@ class ChatInterface {
     this._isListening    = true;
     rec.start();
     this.micBtn?.classList.add('recording');
-    this.micBtn?.setAttribute('title', 'Recording… click or ESC to stop');
+    this.micBtn?.setAttribute('title', 'Recording… click, Ctrl+Shift+M, or ESC to stop');
   }
 
   _stopVoice() {
@@ -1028,7 +1038,7 @@ class ChatInterface {
   _resetMicState() {
     this._isListening = false;
     this.micBtn?.classList.remove('recording', 'transcribing');
-    this.micBtn?.setAttribute('title', 'Voice input (click to speak)');
+    this.micBtn?.setAttribute('title', 'Voice input (click or Ctrl+Shift+M to start / stop)');
     // Whisper / Web-Speech released the mic — let wake word resume listening.
     try { window._wakeDetector?.resume?.(); } catch {}
   }
