@@ -760,6 +760,38 @@ document.getElementById('incogToggleBtn')?.addEventListener('click', async () =>
   _setIncognito(!_incognito);
 });
 
+// ── Tool permissions toggle (title bar) ──────────────────────────────────────
+const _permBtn = document.getElementById('permToggleBtn');
+function _renderPermBtn(on) {
+  if (!_permBtn) return;
+  _permBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  _permBtn.title = on
+    ? 'All tool permissions are ON — click to require prompts'
+    : 'Tool permissions require prompts — click to auto-approve everything';
+  const iconOn  = _permBtn.querySelector('.perm-icon-on');
+  const iconOff = _permBtn.querySelector('.perm-icon-off');
+  if (iconOn)  iconOn.style.display  = on ? '' : 'none';
+  if (iconOff) iconOff.style.display = on ? 'none' : '';
+}
+(async () => {
+  try {
+    const cfg = await window.electronAPI?.getAutoApproveTools?.();
+    _renderPermBtn(cfg?.enabled !== false);
+  } catch { _renderPermBtn(true); }
+})();
+_permBtn?.addEventListener('click', async () => {
+  const isOn = _permBtn.getAttribute('aria-pressed') === 'true';
+  const next = !isOn;
+  // Optimistic UI flip — feels instant; revert on failure.
+  _renderPermBtn(next);
+  try {
+    const res = await window.electronAPI?.saveAutoApproveTools?.(next);
+    if (res?.enabled !== next) _renderPermBtn(!!res?.enabled);
+  } catch {
+    _renderPermBtn(isOn);
+  }
+});
+
 // ── Initial session list load ─────────────────────────────────────────────────
 (async () => {
   try {

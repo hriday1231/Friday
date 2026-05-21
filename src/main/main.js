@@ -851,6 +851,13 @@ ipcMain.handle('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
 ipcMain.handle('get-wake-word-config',  () => SettingsStore.getWakeWordConfig());
 ipcMain.handle('save-wake-word-config', (e, cfg = {}) => { SettingsStore.setWakeWordConfig(cfg); return { success: true, config: SettingsStore.getWakeWordConfig() }; });
 
+// Tool auto-approve toggle (controls the title-bar permission button).
+ipcMain.handle('get-auto-approve-tools',  () => ({ enabled: SettingsStore.getAutoApproveAllTools() }));
+ipcMain.handle('save-auto-approve-tools', (_e, { enabled } = {}) => {
+  SettingsStore.setAutoApproveAllTools(!!enabled);
+  return { success: true, enabled: SettingsStore.getAutoApproveAllTools() };
+});
+
 // OpenWakeWord pipeline (loaded lazily on first start). Audio frames are
 // shipped from the renderer over IPC (one-way, send not invoke for throughput).
 // Detections are broadcast back via 'wake-detected' on webContents.
@@ -926,16 +933,23 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
   const sessionId = incognito ? INCOGNITO_SESSION_ID : (reqSessionId || activeSessionId);
   if (!sessionId) return { success: false, error: 'No active session' };
 
+  // Permission policy is read fresh on every message so the title-bar toggle
+  // takes effect immediately — no need to start a new chat after flipping it.
+  const policy = SettingsStore.getAutoApproveAllTools()
+    ? PermissionPolicy.fullyOpen()
+    : PermissionPolicy.forChat();
+
   let ctx = _sessionContexts.get(sessionId);
   if (!ctx) {
     ctx = new SessionContext({
       sessionId,
-      permissionPolicy: PermissionPolicy.forChat(),
+      permissionPolicy: policy,
       costTracker:      new CostTracker(model),
     });
     _sessionContexts.set(sessionId, ctx);
   } else {
-    ctx.costTracker = new CostTracker(model);
+    ctx.permissionPolicy = policy;
+    ctx.costTracker      = new CostTracker(model);
   }
 
   currentModel     = model;

@@ -351,6 +351,21 @@ body {
 .incog-toggle-btn.active { color: #c9a9ff; background: rgba(155, 110, 230, 0.12); }
 .incog-toggle-btn.active:hover { background: rgba(155, 110, 230, 0.18); }
 
+/* Permissions toggle (title bar). Default state is "all permissions on" —
+   shown as an open lock + green tint. Clicking switches to "prompts required"
+   (closed lock + neutral tint). */
+.perm-toggle-btn {
+  background: none; border: none; color: var(--t-lo); cursor: pointer;
+  padding: 4px 6px; border-radius: 5px; display: flex; align-items: center;
+  transition: color 0.15s, background 0.15s, transform 0.15s;
+}
+.perm-toggle-btn:hover { color: var(--t-hi); background: rgba(255,255,255,0.06); transform: translateY(-1px); }
+.perm-toggle-btn[aria-pressed="true"] {
+  color: #6dd97a;
+  background: rgba(109, 217, 122, 0.10);
+}
+.perm-toggle-btn[aria-pressed="true"]:hover { background: rgba(109, 217, 122, 0.16); }
+
 body[data-incognito="on"] .chat-messages::before {
   content: "👻  Incognito — local only, nothing saved";
   display: block;

@@ -803,7 +803,7 @@ class ChatInterface {
     return {
       RMS_SPEECH_THRESH:  0.014,   // RMS above this counts as "speech"
       NO_SPEECH_TIMEOUT:  4000,    // give up if nothing audible after start
-      SILENCE_END_MS:     800,     // sustained silence after speech → auto-stop
+      SILENCE_END_MS:     2000,     // sustained silence after speech → auto-stop
       MAX_MS:             30000,   // safety ceiling (long dictations)
       POLL_MS:            40,      // rolling RMS check cadence
     };

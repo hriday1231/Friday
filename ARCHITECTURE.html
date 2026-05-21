@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Friday — Architecture Map</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(ellipse at top, #161b25 0%, #0a0d12 70%) fixed;
+    color: #e8eaed;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :root {
+    --bg: #0a0d12;
+    --panel: #131720;
+    --panel-2: #181d28;
+    --panel-3: #1d2330;
+    --border: #232a38;
+    --border-soft: #1a1f2a;
+    --text: #e8eaed;
+    --text-mid: #a8b0bb;
+    --text-low: #6a737d;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Code", "Source Code Pro", Consolas, monospace;
+
+    --cat-renderer:  #6cb1ff;
+    --cat-preload:   #b594ff;
+    --cat-shell:     #8a96a8;
+    --cat-agent:     #ff8b3d;
+    --cat-provider:  #4dd4e8;
+    --cat-service:   #4dd4b3;
+    --cat-tool:      #6dd97a;
+    --cat-storage:   #e8b157;
+    --cat-external:  #d96a6a;
+    --cat-disk:      #6a737d;
+  }
+
+  /* ── Top chrome (search, legend) ───────────────────────────────────────── */
+  .top {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 14px 18px;
+    background: linear-gradient(180deg, rgba(10,13,18,0.95) 0%, rgba(10,13,18,0.6) 70%, transparent 100%);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    font-size: 17px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand::before {
+    content: "";
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--cat-agent);
+    box-shadow: 0 0 12px rgba(255,139,61,0.6);
+  }
+  .brand small {
+    color: var(--text-low);
+    font-weight: 500;
+    font-size: 12px;
+    margin-left: 6px;
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+  }
+
+  .search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 340px;
+  }
+  .search-input {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px 8px 32px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .search-input:focus {
+    border-color: var(--cat-agent);
+    background: var(--panel-2);
+  }
+  .search-icon {
+    position: absolute;
+    left: 11px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-low);
+    pointer-events: none;
+  }
+
+  .legend {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-mid);
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
+    user-select: none;
+  }
+  .legend-item.off { opacity: 0.35; }
+  .legend-item:hover { background: var(--panel-2); }
+  .legend-item .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+  }
+
+  .help {
+    color: var(--text-low);
+    font-size: 11.5px;
+    font-family: var(--mono);
+    letter-spacing: 0.02em;
+    user-select: none;
+  }
+  .help kbd {
+    background: var(--panel-3);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    color: var(--text-mid);
+  }
+
+  .reset-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-mid);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .reset-btn:hover {
+    background: var(--panel-2);
+    color: var(--text);
+    border-color: var(--cat-agent);
+  }
+  .reset-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .reset-btn[disabled]:hover {
+    background: var(--panel);
+    color: var(--text-mid);
+    border-color: var(--border);
+  }
+
+  /* ── Graph canvas ──────────────────────────────────────────────────────── */
+  #graph {
+    position: fixed; inset: 0;
+    cursor: grab;
+    user-select: none;
+  }
+  #graph.panning { cursor: grabbing; }
+  #graph .edge {
+    fill: none;
+    stroke: #2d3548;
+    stroke-width: 1.2;
+    transition: stroke 0.15s, stroke-width 0.15s, opacity 0.2s;
+  }
+  #graph .edge.dim { opacity: 0.15; }
+  #graph .edge.highlight {
+    stroke: #ff8b3d;
+    stroke-width: 1.8;
+    opacity: 1;
+  }
+  #graph .edge.dashed {
+    stroke-dasharray: 4 4;
+  }
+  #graph .edge-arrow {
+    fill: #2d3548;
+    transition: fill 0.15s, opacity 0.2s;
+  }
+  #graph .edge.dim ~ .edge-arrow { opacity: 0.15; }
+  #graph .node {
+    cursor: grab;
+    transition: opacity 0.2s, filter 0.2s;
+  }
+  #graph .node.dragging {
+    cursor: grabbing;
+  }
+  #graph .node.dragging rect {
+    filter: drop-shadow(0 0 12px currentColor);
+    stroke-width: 2.2;
+  }
+  #graph .node rect {
+    fill: var(--panel);
+    stroke: var(--border);
+    stroke-width: 1.2;
+    rx: 7; ry: 7;
+    transition: fill 0.15s, stroke 0.15s, stroke-width 0.15s;
+  }
+  #graph .node text {
+    fill: var(--text);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    pointer-events: none;
+    dominant-baseline: middle;
+    text-anchor: middle;
+  }
+  #graph .node .node-cat {
+    font-size: 9px;
+    fill: var(--text-low);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  #graph .node:hover rect, #graph .node.active rect {
+    stroke-width: 2;
+  }
+  #graph .node.dim { opacity: 0.18; filter: saturate(0.5); }
+  #graph .node.heart rect {
+    stroke-width: 2.2;
+    filter: drop-shadow(0 0 8px rgba(255,139,61,0.45));
+  }
+
+  /* Category color via JS-set attribute */
+  #graph .node[data-cat="renderer"] rect  { stroke: var(--cat-renderer); }
+  #graph .node[data-cat="preload"] rect   { stroke: var(--cat-preload); }
+  #graph .node[data-cat="shell"] rect     { stroke: var(--cat-shell); }
+  #graph .node[data-cat="agent"] rect     { stroke: var(--cat-agent); }
+  #graph .node[data-cat="provider"] rect  { stroke: var(--cat-provider); }
+  #graph .node[data-cat="service"] rect   { stroke: var(--cat-service); }
+  #graph .node[data-cat="tool"] rect      { stroke: var(--cat-tool); }
+  #graph .node[data-cat="storage"] rect   { stroke: var(--cat-storage); }
+  #graph .node[data-cat="external"] rect  { stroke: var(--cat-external); }
+  #graph .node[data-cat="disk"] rect      { stroke: var(--cat-disk); }
+  #graph .node[data-cat="renderer"]:hover rect { fill: rgba(108,177,255,0.08); }
+  #graph .node[data-cat="preload"]:hover rect  { fill: rgba(181,148,255,0.08); }
+  #graph .node[data-cat="shell"]:hover rect    { fill: rgba(138,150,168,0.08); }
+  #graph .node[data-cat="agent"]:hover rect    { fill: rgba(255,139,61,0.10); }
+  #graph .node[data-cat="provider"]:hover rect { fill: rgba(77,212,232,0.08); }
+  #graph .node[data-cat="service"]:hover rect  { fill: rgba(77,212,179,0.08); }
+  #graph .node[data-cat="tool"]:hover rect     { fill: rgba(109,217,122,0.08); }
+  #graph .node[data-cat="storage"]:hover rect  { fill: rgba(232,177,87,0.08); }
+  #graph .node[data-cat="external"]:hover rect { fill: rgba(217,106,106,0.08); }
+  #graph .node[data-cat="disk"]:hover rect     { fill: rgba(106,115,125,0.10); }
+  #graph .node.active rect { filter: drop-shadow(0 0 8px currentColor); }
+
+  /* ── Side panel ────────────────────────────────────────────────────────── */
+  .side {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 380px;
+    background: linear-gradient(180deg, rgba(19,23,32,0.98), rgba(15,18,25,0.98));
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform 0.25s cubic-bezier(.5,.1,.3,1.2);
+    z-index: 20;
+    overflow-y: auto;
+    padding: 56px 24px 24px;
+    backdrop-filter: blur(12px);
+  }
+  .side.open { transform: translateX(0); }
+  @media (max-width: 600px) { .side { width: 100%; } }
+
+  .side .close-btn {
+    position: absolute;
+    top: 14px; right: 16px;
+    background: var(--panel-3);
+    border: 1px solid var(--border);
+    color: var(--text-mid);
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .side .close-btn:hover { background: var(--panel-2); color: var(--text); }
+
+  .side .cat-pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 999px;
+    margin-bottom: 12px;
+  }
+  .side h2 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.005em;
+  }
+  .side .side-path {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-low);
+    margin-bottom: 16px;
+    word-break: break-all;
+  }
+  .side .side-desc {
+    color: var(--text-mid);
+    font-size: 13.5px;
+    line-height: 1.6;
+    margin-bottom: 22px;
+  }
+  .side .side-section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .side .side-section h4 {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-low);
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+  .side .relation-list {
+    list-style: none;
+    padding: 0; margin: 0;
+  }
+  .side .relation-list li {
+    background: var(--panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 6px;
+    padding: 7px 10px;
+    margin-bottom: 5px;
+    font-size: 12.5px;
+    font-family: var(--mono);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .side .relation-list li:hover {
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+  .side .relation-list li .arrow {
+    color: var(--text-low);
+    font-size: 11px;
+  }
+  .side .relation-list li .lbl { color: var(--text-mid); margin-left: auto; font-size: 11px; }
+  .side .relation-empty {
+    color: var(--text-low);
+    font-size: 12px;
+    font-style: italic;
+  }
+
+  /* ── Loading hint ──────────────────────────────────────────────────────── */
+  .hint {
+    position: fixed;
+    bottom: 18px; left: 50%;
+    transform: translateX(-50%);
+    color: var(--text-low);
+    font-size: 11.5px;
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+    pointer-events: none;
+    background: rgba(10,13,18,0.7);
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-soft);
+    backdrop-filter: blur(6px);
+  }
+  .hint kbd {
+    background: var(--panel-3);
+    border: 1px solid var(--border);
+    padding: 0 5px;
+    border-radius: 3px;
+    color: var(--text-mid);
+    margin: 0 2px;
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">Friday <small>architecture map</small></div>
+  <div class="search-wrap">
+    <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input class="search-input" id="search" placeholder="Filter nodes (try: agent, ollama, wake)…" />
+  </div>
+  <div class="legend" id="legend"></div>
+  <button class="reset-btn" id="resetLayoutBtn" disabled title="Restore default node positions">↺ Reset layout</button>
+</div>
+
+<svg id="graph" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1700 1000" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <marker id="arrow"           viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2d3548"/></marker>
+    <marker id="arrow-highlight" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ff8b3d"/></marker>
+  </defs>
+  <g id="viewport">
+    <g id="edges-layer"></g>
+    <g id="nodes-layer"></g>
+  </g>
+</svg>
+
+<aside class="side" id="side" aria-hidden="true">
+  <button class="close-btn" id="sideClose" aria-label="Close">×</button>
+  <div id="sideBody"></div>
+</aside>
+
+<div class="hint"><kbd>Click</kbd> a node · <kbd>Drag</kbd> nodes to rearrange · <kbd>Drag</kbd> background to pan · <kbd>Wheel</kbd> to zoom</div>
+
+<script>
+'use strict';
+
+// ─── Node + edge data ──────────────────────────────────────────────────────
+const CATEGORIES = {
+  renderer: { label: 'Renderer',     color: 'var(--cat-renderer)',  hex: '#6cb1ff' },
+  preload:  { label: 'IPC Bridge',   color: 'var(--cat-preload)',   hex: '#b594ff' },
+  shell:    { label: 'App Shell',    color: 'var(--cat-shell)',     hex: '#8a96a8' },
+  agent:    { label: 'Agent Core',   color: 'var(--cat-agent)',     hex: '#ff8b3d' },
+  provider: { label: 'Provider',     color: 'var(--cat-provider)',  hex: '#4dd4e8' },
+  service:  { label: 'Service',      color: 'var(--cat-service)',   hex: '#4dd4b3' },
+  tool:     { label: 'Tool',         color: 'var(--cat-tool)',      hex: '#6dd97a' },
+  storage:  { label: 'Storage',      color: 'var(--cat-storage)',   hex: '#e8b157' },
+  external: { label: 'External',     color: 'var(--cat-external)',  hex: '#d96a6a' },
+  disk:     { label: 'On Disk',      color: 'var(--cat-disk)',      hex: '#6a737d' },
+};
+
+// All x/y are top-left of node, in SVG coords.
+// Node width defaults to 170; height 50.
+const NODES = [
+  // ─── Renderer column (x ≈ 60–230) ─────────────────────────────────────
+  { id: 'renderer-js',   label: 'renderer.js',          cat: 'renderer', x:  60, y:  90,
+    path: 'src/renderer/renderer.js',
+    desc: 'Top-level renderer orchestration: session list, suggestions, memory proposal banners, wake-word boot, voice events.' },
+  { id: 'chat-ui',       label: 'ChatInterface',        cat: 'renderer', x:  60, y: 170,
+    path: 'src/renderer/components/ChatInterface.js',
+    desc: 'The chat UI itself: message rendering, streaming part dispatch, permission banner, model picker integration, effort toggle, mic button.' },
+  { id: 'model-selector',label: 'ModelSelector',        cat: 'renderer', x:  60, y: 240,
+    path: 'src/renderer/components/ModelSelector.js',
+    desc: 'Model picker pill in the input footer. Tracks currentModel + currentModelType; emits onModelChanged so other UI bits can react.' },
+  { id: 'rag',           label: 'RAG (BM25 + emb)',     cat: 'renderer', x:  60, y: 310,
+    path: 'src/renderer/rag/',
+    desc: 'Per-session document indexing. BM25 keyword index plus chunk embeddings (via Ollama nomic-embed-text over IPC). Used when the user pastes/drops PDFs or long text into chat.' },
+  { id: 'wake-renderer', label: 'wakeWord.js',          cat: 'renderer', x:  60, y: 400,
+    path: 'src/renderer/wakeWord.js',
+    desc: 'Captures 16 kHz mono Float32 audio via AudioWorklet. Batches worklet frames into 80 ms chunks before IPC to cut traffic ~10×. On wake-detected, a tiny RMS-based VAD runs: it ends capture on 600 ms of sustained silence after speech (typical ~1.5–2.5 s for a short command, 1.5 s if nothing spoken) and only then ships a WAV blob to whisper-cli for STT. Whisper is skipped entirely when no speech is detected.' },
+  { id: 'audio-worklet', label: 'AudioWorklet',         cat: 'renderer', x:  60, y: 470,
+    path: 'inline in wakeWord.js / ChatInterface.js',
+    desc: 'Tiny PCM-capture AudioWorkletProcessor. Forwards raw Float32 frames from the mic to the main thread.' },
+
+  // ─── Preload bridge (x = 290) ──────────────────────────────────────────
+  { id: 'preload',       label: 'preload.js (electronAPI)', cat: 'preload', x: 290, y: 280, w: 200,
+    path: 'src/preload.js',
+    desc: 'contextBridge.exposeInMainWorld surface — the ONLY thing the renderer can call. Each entry maps to ipcRenderer.invoke (request/response) or ipcRenderer.send (fire-and-forget) plus listeners for push events.' },
+
+  // ─── Main app shell (x ≈ 560) ─────────────────────────────────────────
+  { id: 'main-js',       label: 'main.js',              cat: 'shell', x: 560, y:  50,
+    path: 'src/main/main.js',
+    desc: 'Electron main entry. Owns the BrowserWindow, tray, global hotkey, single-instance lock, all IPC handlers, and instantiates every service. The wiring layer.' },
+  { id: 'browser-window',label: 'BrowserWindow',        cat: 'shell', x: 720, y:  20, w: 130,
+    path: 'electron API',
+    desc: 'Hidden-by-default 900×900 frameless window. Holds the renderer process. Toggled by global hotkey or taskbar click (via single-instance event).' },
+  { id: 'tray',          label: 'Tray icon',            cat: 'shell', x: 720, y:  80, w: 130,
+    path: 'src/main/tray.js',
+    desc: 'System tray icon + context menu. macOS gets a right-click menu; Win/Linux respond to left-click.' },
+  { id: 'hotkey',        label: 'GlobalShortcut',       cat: 'shell', x: 720, y: 140, w: 130,
+    path: 'electron API',
+    desc: 'OS-level global hotkey (default Ctrl+Shift+Space) that toggles the window from anywhere.' },
+
+  // ─── Agent core (x ≈ 560, y ≈ 220) ────────────────────────────────────
+  { id: 'agent-runtime', label: 'AgentRuntime',         cat: 'agent', x: 560, y: 290, w: 200,
+    path: 'src/main/agents/AgentRuntime.js',
+    desc: 'The chat loop. processMessage() is the single entry point: loads context (memory/episodes/few-shots), builds system prompt, calls provider, streams events, executes tool calls under permission policy, loops until no more tools. Emits 8 typed event types.',
+    heart: true },
+  { id: 'session-ctx',   label: 'SessionContext',       cat: 'agent', x: 380, y: 240,
+    path: 'src/main/agents/SessionContext.js',
+    desc: 'Per-session state: abort controller (so Stop button works), permission policy, cost tracker. One per active session, kept in a Map keyed by sessionId.' },
+  { id: 'perm-mgr',      label: 'PermissionManager',    cat: 'agent', x: 380, y: 310,
+    path: 'src/main/agents/PermissionManager.js',
+    desc: 'Per-tool permission tiers. Read-only tools (search, fetch) run silently; write tools (calendar, launch_app) emit permission.request events that block until the renderer responds with approve/deny.' },
+  { id: 'compaction',    label: 'CompactionManager',    cat: 'agent', x: 380, y: 380,
+    path: 'src/main/agents/CompactionManager.js',
+    desc: 'When a session\'s message history approaches the model\'s context window, summarizes the oldest turns into a rolling summary so the recent turns stay verbatim.' },
+  { id: 'cost-tracker',  label: 'CostTracker',          cat: 'agent', x: 380, y: 450,
+    path: 'src/main/agents/CostTracker.js',
+    desc: 'Token-in / token-out counters with per-provider USD math. Shows up as the small cost figure attached to step-finish parts.' },
+  { id: 'system-prompt', label: 'systemPrompt builder', cat: 'agent', x: 560, y: 380, w: 200,
+    path: 'src/main/config/systemPrompt.js',
+    desc: 'Composes the system message from layered context: memory facts, episode digests, few-shots, optional agent personality, rolling summary, date/time. Wraps untrusted strings in <untrusted_data> blocks for prompt-injection hardening.' },
+
+  // ─── Providers (x ≈ 800) ──────────────────────────────────────────────
+  { id: 'provider-mgr',  label: 'ProviderManager',      cat: 'provider', x: 810, y: 290,
+    path: 'src/main/providers/ProviderManager.js',
+    desc: 'Routes model name → provider instance (model prefix matching). Caches the model lists so the picker UI never blocks.' },
+  { id: 'ollama-p',      label: 'OllamaProvider',       cat: 'provider', x: 810, y: 200,
+    path: 'src/main/providers/OllamaProvider.js',
+    desc: 'Local inference. Streams SSE-style JSON lines from /api/chat. Honors the per-request `think: low|medium|high` field for thinking-capable models (gpt-oss, future qwen3/r1 variants).' },
+  { id: 'groq-p',        label: 'GroqProvider',         cat: 'provider', x: 990, y: 230,
+    path: 'src/main/providers/GroqProvider.js',
+    desc: 'LPU cloud inference. OpenAI-compatible API. Fast Llama/Qwen variants.' },
+  { id: 'gemini-p',      label: 'GeminiProvider',       cat: 'provider', x: 990, y: 300,
+    path: 'src/main/providers/GeminiProvider.js',
+    desc: 'Google\'s @google/generative-ai SDK. Vision-capable; supports image inputs and tool use via functionDeclarations.' },
+  { id: 'openrouter-p',  label: 'OpenRouterProvider',   cat: 'provider', x: 990, y: 370,
+    path: 'src/main/providers/OpenRouterProvider.js',
+    desc: 'Aggregator: Claude, OpenAI, DeepSeek, and ~hundreds more. Same OpenAI-compatible shape as Groq.' },
+
+  // ─── Services (HTTP clients to external) (x ≈ 1180) ──────────────────
+  { id: 'ollama-svc',    label: 'OllamaService',        cat: 'service', x: 1180, y: 130,
+    path: 'src/main/services/OllamaService.js',
+    desc: 'HTTP client to localhost:11434. fetchModels, chatWithTools, isRunning. Has the PREFERRED_FALLBACK constant (currently gpt-oss:20b).' },
+  { id: 'groq-svc',      label: 'GroqService',          cat: 'service', x: 1180, y: 230,
+    path: 'src/main/services/GroqService.js',
+    desc: 'Groq API key + fetchModels + isConfigured. Used by GroqProvider for chat and by Settings test buttons via test-integration.' },
+  { id: 'gemini-svc',    label: 'GeminiService',        cat: 'service', x: 1180, y: 300,
+    path: 'src/main/services/GeminiService.js',
+    desc: 'Gemini API key + lazy GoogleGenerativeAI client + fetchModels.' },
+  { id: 'openrouter-svc',label: 'OpenRouterService',    cat: 'service', x: 1180, y: 370,
+    path: 'src/main/services/OpenRouterService.js',
+    desc: 'OpenRouter API key + fetchModels (returns 300+ models on a healthy account).' },
+  { id: 'brave-svc',     label: 'BraveSearchService',   cat: 'service', x: 1180, y: 460,
+    path: 'src/main/services/BraveSearchService.js',
+    desc: 'Brave Search API client. Used by the brave_web_search tool and (transitively) by search_site.' },
+  { id: 'gcal-svc',      label: 'GoogleCalendarService',cat: 'service', x: 1180, y: 530,
+    path: 'src/main/services/GoogleCalendarService.js',
+    desc: 'OAuth installed-app flow + Calendar API client. Spins up a temporary localhost:3131 callback server during sign-in.' },
+  { id: 'wake-svc',      label: 'WakeWordService',      cat: 'service', x: 290, y: 540,
+    path: 'src/main/services/WakeWordService.js',
+    desc: 'OpenWakeWord ONNX pipeline. Three chained models — melspectrogram → embedding → phrase-specific (hey_jarvis / alexa / hey_mycroft / hey_rhasspy). Pre-warms buffers with 2.5 s of silence at load() so first-detection latency is ~80–150 ms instead of paying a ~2.5 s bootstrap. Dual-threshold trigger: strong (p > 0.55, fires instantly on a single chunk) plus sustained (p > 0.40 over 2 consecutive chunks) — single-frame noise spikes are filtered out. Cooldown 1500 ms.' },
+
+  // ─── Tools (bottom band) ──────────────────────────────────────────────
+  { id: 'tool-registry', label: 'ToolRegistry',         cat: 'tool', x: 810, y: 650,
+    path: 'src/main/tools/ToolRegistry.js',
+    desc: 'Tool catalog. Holds { declaration, handler } per tool. Exposes provider-native formats (Ollama tool schema, Gemini functionDeclarations).' },
+  { id: 'brave-tool',    label: 'brave_web_search',     cat: 'tool', x: 990, y: 620,
+    path: 'src/main/tools/builtin/braveSearch.js',
+    desc: 'Web search via Brave API. Top-N JSON results. Blocked in incognito sessions.' },
+  { id: 'fetch-tool',    label: 'fetch_page',           cat: 'tool', x: 990, y: 680,
+    path: 'src/main/tools/builtin/fetchPage.js',
+    desc: 'Downloads a public URL, strips boilerplate, returns readable text. Handles PDFs via pdfjs-dist.' },
+  { id: 'open-url-tool', label: 'open_url / open_bookmark', cat: 'tool', x: 990, y: 740, w: 200,
+    path: 'src/main/tools/builtin/openUrl.js, openBookmark.js',
+    desc: 'Opens URLs (or named bookmarks from settings) in the default browser. Optionally incognito.' },
+  { id: 'launch-tool',   label: 'launch_app',           cat: 'tool', x: 1180, y: 650,
+    path: 'src/main/tools/builtin/launchApp.js',
+    desc: 'Launches a configured app shortcut by friendly name ("Code", "Steam", "Brave"). Cross-platform via child_process.spawn.' },
+  { id: 'search-site-tool', label: 'search_site',       cat: 'tool', x: 1180, y: 710,
+    path: 'src/main/tools/builtin/searchSite.js',
+    desc: 'Site-scoped web search (YouTube, Amazon, GitHub, etc.). Builds on brave_web_search with a site: filter.' },
+  { id: 'cal-tools',     label: 'calendar tools',       cat: 'tool', x: 1180, y: 770, w: 200,
+    path: 'src/main/tools/builtin/{add,edit,delete}Event.js, getCalendarSummary.js',
+    desc: 'Google Calendar CRUD. Writes are permission-gated; reads (get_calendar_summary) run silently. All blocked in incognito.' },
+  { id: 'mcp',           label: 'MCPClient',            cat: 'tool', x: 810, y: 720,
+    path: 'src/main/mcp/MCPClient.js',
+    desc: 'Spawns external MCP servers via stdio transport. Registered tools land in the same ToolRegistry — agent treats them identically to built-ins.' },
+
+  // ─── Storage ──────────────────────────────────────────────────────────
+  { id: 'persistent-store', label: 'PersistentStore',   cat: 'storage', x: 580, y: 560, w: 180,
+    path: 'src/main/store/PersistentStore.js',
+    desc: 'sql.js (pure-JS SQLite) in-memory database with a 500ms debounced disk flush. Tables: sessions, messages, memory, documents, feedback.' },
+  { id: 'settings-store', label: 'SettingsStore',       cat: 'storage', x: 380, y: 530,
+    path: 'src/main/settings/SettingsStore.js',
+    desc: 'electron-store wrapper. API keys, hotkey, model slots, app shortcuts, web bookmarks, voice config. Validates writes (Ollama URL must be loopback/LAN; wake phrase must be a known model id).' },
+  { id: 'memory-emb',    label: 'MemoryEmbedder',       cat: 'storage', x: 580, y: 480,
+    path: 'src/main/memory/MemoryEmbedder.js',
+    desc: 'Embedding service for memory facts and document chunks. Calls Ollama\'s nomic-embed-text model. Caches results for 5s to dedupe concurrent requests.' },
+
+  // ─── External APIs ────────────────────────────────────────────────────
+  { id: 'ollama-ext',    label: 'Ollama @ :11434',      cat: 'external', x: 1450, y: 130,
+    path: 'localhost:11434',
+    desc: 'Local LLM runtime. Friday talks to it via OllamaService. The MXFP4 quantized gpt-oss:20b is the default; OLLAMA_FLASH_ATTENTION=1 + OLLAMA_KV_CACHE_TYPE=q8_0 + OLLAMA_KEEP_ALIVE=24h are set in env.' },
+  { id: 'groq-api',      label: 'Groq API',             cat: 'external', x: 1450, y: 230,
+    path: 'https://api.groq.com',
+    desc: 'OpenAI-compatible cloud endpoint, LPU-accelerated.' },
+  { id: 'gemini-api',    label: 'Gemini API',           cat: 'external', x: 1450, y: 300,
+    path: 'https://generativelanguage.googleapis.com',
+    desc: 'Google AI Studio endpoint. Supports vision + function calling.' },
+  { id: 'openrouter-api',label: 'OpenRouter API',       cat: 'external', x: 1450, y: 370,
+    path: 'https://openrouter.ai/api/v1',
+    desc: 'Universal LLM aggregator. Single key, hundreds of models.' },
+  { id: 'brave-api',     label: 'Brave Search API',     cat: 'external', x: 1450, y: 460,
+    path: 'https://api.search.brave.com',
+    desc: 'Web search API. Used by brave_web_search and (via that) by search_site.' },
+  { id: 'gcal-api',      label: 'Google Calendar API',  cat: 'external', x: 1450, y: 530,
+    path: 'https://www.googleapis.com/calendar',
+    desc: 'Calendar CRUD endpoint. Auth via stored OAuth refresh token.' },
+  { id: 'whisper-bin',   label: 'whisper-cli (subprocess)', cat: 'external', x: 290, y: 720, w: 200,
+    path: 'C:\\Whisper\\Release\\whisper-cli.exe',
+    desc: 'Local Whisper.cpp binary. Spawned per transcription request via child_process.execFile. Friday uses ggml-large-v3-turbo by default.' },
+  { id: 'shell-os',      label: 'OS shell',             cat: 'external', x: 1180, y: 830,
+    path: 'shell.openExternal / child_process',
+    desc: 'OS-level URL launches (shell.openExternal) and app launches (child_process.spawn). Tool-supplied URLs flow through SettingsStore.safeHttpUrl() first.' },
+
+  // ─── On-disk files ────────────────────────────────────────────────────
+  { id: 'sqlite-file',   label: 'friday.db',            cat: 'disk', x: 580, y: 660, w: 130,
+    path: '<userData>/friday/friday.db',
+    desc: 'Persisted SQLite database. Written via debounced flush from PersistentStore.' },
+  { id: 'settings-file', label: 'friday-settings.json', cat: 'disk', x: 380, y: 660, w: 170,
+    path: '<userData>/friday-settings.json',
+    desc: 'electron-store on-disk file. Holds API keys, model slots, app shortcuts, wake config.' },
+  { id: 'wake-cache',    label: 'wakeword/*.onnx',      cat: 'disk', x:  80, y: 720, w: 160,
+    path: '<userData>/friday/wakeword/',
+    desc: 'OpenWakeWord ONNX model files (3 of them, ~3.5 MB total), downloaded once from GitHub releases v0.5.1.' },
+  { id: 'gcal-token',    label: 'google-calendar-token.json', cat: 'disk', x: 1450, y: 700, w: 220,
+    path: '<userData>/google-calendar-token.json',
+    desc: 'OAuth refresh + access tokens for Google Calendar. Written after the initial sign-in flow; refreshed on demand.' },
+];
+
+// Edges: from → to. type: 'call' (solid), 'event' (dashed orange-ish), 'data' (storage).
+const EDGES = [
+  // Renderer internal
+  { from: 'chat-ui',         to: 'model-selector',  type: 'call' },
+  { from: 'renderer-js',     to: 'chat-ui',         type: 'call' },
+  { from: 'renderer-js',     to: 'wake-renderer',   type: 'call' },
+  { from: 'wake-renderer',   to: 'audio-worklet',   type: 'call' },
+  { from: 'chat-ui',         to: 'rag',             type: 'call' },
+
+  // Renderer → preload (everything goes through electronAPI)
+  { from: 'chat-ui',         to: 'preload',         type: 'call' },
+  { from: 'model-selector',  to: 'preload',         type: 'call' },
+  { from: 'renderer-js',     to: 'preload',         type: 'call' },
+  { from: 'wake-renderer',   to: 'preload',         type: 'call' },
+  { from: 'rag',             to: 'preload',         type: 'call' },
+
+  // Preload → main entry
+  { from: 'preload',         to: 'main-js',         type: 'call' },
+
+  // Main shell internal
+  { from: 'main-js',         to: 'browser-window',  type: 'call' },
+  { from: 'main-js',         to: 'tray',            type: 'call' },
+  { from: 'main-js',         to: 'hotkey',          type: 'call' },
+
+  // Main → agent runtime (the chat path)
+  { from: 'main-js',         to: 'agent-runtime',   type: 'call' },
+
+  // AgentRuntime → core helpers
+  { from: 'agent-runtime',   to: 'session-ctx',     type: 'call' },
+  { from: 'session-ctx',     to: 'perm-mgr',        type: 'call' },
+  { from: 'agent-runtime',   to: 'compaction',      type: 'call' },
+  { from: 'agent-runtime',   to: 'cost-tracker',    type: 'call' },
+  { from: 'agent-runtime',   to: 'system-prompt',   type: 'call' },
+
+  // AgentRuntime → providers
+  { from: 'agent-runtime',   to: 'provider-mgr',    type: 'call' },
+  { from: 'provider-mgr',    to: 'ollama-p',        type: 'call' },
+  { from: 'provider-mgr',    to: 'groq-p',          type: 'call' },
+  { from: 'provider-mgr',    to: 'gemini-p',        type: 'call' },
+  { from: 'provider-mgr',    to: 'openrouter-p',    type: 'call' },
+
+  // Provider → service
+  { from: 'ollama-p',        to: 'ollama-svc',      type: 'call' },
+  { from: 'groq-p',          to: 'groq-svc',        type: 'call' },
+  { from: 'gemini-p',        to: 'gemini-svc',      type: 'call' },
+  { from: 'openrouter-p',    to: 'openrouter-svc',  type: 'call' },
+
+  // Service → external
+  { from: 'ollama-svc',      to: 'ollama-ext',      type: 'network' },
+  { from: 'groq-svc',        to: 'groq-api',        type: 'network' },
+  { from: 'gemini-svc',      to: 'gemini-api',      type: 'network' },
+  { from: 'openrouter-svc',  to: 'openrouter-api',  type: 'network' },
+  { from: 'brave-svc',       to: 'brave-api',       type: 'network' },
+  { from: 'gcal-svc',        to: 'gcal-api',        type: 'network' },
+
+  // AgentRuntime → tools
+  { from: 'agent-runtime',   to: 'tool-registry',   type: 'call' },
+  { from: 'tool-registry',   to: 'brave-tool',      type: 'call' },
+  { from: 'tool-registry',   to: 'fetch-tool',      type: 'call' },
+  { from: 'tool-registry',   to: 'open-url-tool',   type: 'call' },
+  { from: 'tool-registry',   to: 'launch-tool',     type: 'call' },
+  { from: 'tool-registry',   to: 'search-site-tool',type: 'call' },
+  { from: 'tool-registry',   to: 'cal-tools',       type: 'call' },
+  { from: 'tool-registry',   to: 'mcp',             type: 'call' },
+
+  // Tool → external (service or OS)
+  { from: 'brave-tool',      to: 'brave-svc',       type: 'call' },
+  { from: 'search-site-tool',to: 'brave-svc',       type: 'call' },
+  { from: 'cal-tools',       to: 'gcal-svc',        type: 'call' },
+  { from: 'open-url-tool',   to: 'shell-os',        type: 'call' },
+  { from: 'launch-tool',     to: 'shell-os',        type: 'call' },
+
+  // Storage edges
+  { from: 'agent-runtime',   to: 'persistent-store',type: 'data' },
+  { from: 'agent-runtime',   to: 'memory-emb',      type: 'data' },
+  { from: 'memory-emb',      to: 'ollama-svc',      type: 'call' },
+  { from: 'system-prompt',   to: 'persistent-store',type: 'data' },
+  { from: 'persistent-store',to: 'sqlite-file',     type: 'data' },
+  { from: 'main-js',         to: 'settings-store',  type: 'data' },
+  { from: 'settings-store',  to: 'settings-file',   type: 'data' },
+  { from: 'gcal-svc',        to: 'gcal-token',      type: 'data' },
+
+  // Voice pipeline
+  { from: 'main-js',         to: 'wake-svc',        type: 'call' },
+  { from: 'wake-svc',        to: 'wake-cache',      type: 'data' },
+  { from: 'wake-svc',        to: 'main-js',         type: 'event' },
+  { from: 'main-js',         to: 'whisper-bin',     type: 'call' },
+
+  // Event return path (back to renderer)
+  { from: 'agent-runtime',   to: 'main-js',         type: 'event' },
+];
+
+const NODE_HEIGHT = 50;
+const DEFAULT_WIDTH = 170;
+const LAYOUT_STORAGE_KEY = 'friday-arch-layout-v1';
+
+// Compute layout (just merge in defaults)
+NODES.forEach(n => { n.w = n.w || DEFAULT_WIDTH; n.h = NODE_HEIGHT; });
+const NODE_INDEX = Object.fromEntries(NODES.map(n => [n.id, n]));
+
+// Snapshot the default positions so "Reset layout" can restore them.
+const DEFAULT_POSITIONS = Object.fromEntries(NODES.map(n => [n.id, { x: n.x, y: n.y }]));
+
+// Restore saved positions from localStorage (if any).
+function loadSavedLayout() {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    let restored = 0;
+    Object.entries(saved).forEach(([id, pos]) => {
+      const n = NODE_INDEX[id];
+      if (n && typeof pos.x === 'number' && typeof pos.y === 'number') {
+        n.x = pos.x;
+        n.y = pos.y;
+        restored++;
+      }
+    });
+    return restored > 0;
+  } catch { return false; }
+}
+const hadSavedLayout = loadSavedLayout();
+function saveLayout() {
+  const layout = {};
+  NODES.forEach(n => { layout[n.id] = { x: n.x, y: n.y }; });
+  try { localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout)); } catch {}
+  document.getElementById('resetLayoutBtn').disabled = false;
+}
+
+// ─── Render legend ────────────────────────────────────────────────────────
+const legendEl = document.getElementById('legend');
+const catVisible = {};
+Object.keys(CATEGORIES).forEach(k => { catVisible[k] = true; });
+Object.entries(CATEGORIES).forEach(([key, info]) => {
+  const el = document.createElement('div');
+  el.className = 'legend-item';
+  el.style.color = info.hex;
+  el.dataset.cat = key;
+  el.innerHTML = `<span class="dot"></span><span style="color:var(--text)">${info.label}</span>`;
+  el.addEventListener('click', () => {
+    catVisible[key] = !catVisible[key];
+    el.classList.toggle('off', !catVisible[key]);
+    applyFilters();
+  });
+  legendEl.appendChild(el);
+});
+
+// ─── Render edges + nodes into SVG ────────────────────────────────────────
+const svg = document.getElementById('graph');
+const edgesLayer = document.getElementById('edges-layer');
+const nodesLayer = document.getElementById('nodes-layer');
+const viewport = document.getElementById('viewport');
+
+function pointOnRectEdge(rect, targetX, targetY) {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const dx = targetX - cx;
+  const dy = targetY - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const hw = rect.w / 2;
+  const hh = rect.h / 2;
+  const sx = Math.abs(dx) > 0 ? hw / Math.abs(dx) : Infinity;
+  const sy = Math.abs(dy) > 0 ? hh / Math.abs(dy) : Infinity;
+  const s = Math.min(sx, sy);
+  return { x: cx + dx * s, y: cy + dy * s };
+}
+
+function buildEdgePath(a, b) {
+  const ac = { x: a.x + a.w/2, y: a.y + a.h/2 };
+  const bc = { x: b.x + b.w/2, y: b.y + b.h/2 };
+  const start = pointOnRectEdge(a, bc.x, bc.y);
+  const end   = pointOnRectEdge(b, ac.x, ac.y);
+  // Bezier with control points pulled along axis
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dist = Math.hypot(dx, dy);
+  const k = Math.min(80, dist * 0.4);
+  // Horizontal-dominant vs vertical-dominant control
+  let c1x, c1y, c2x, c2y;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    c1x = start.x + Math.sign(dx) * k; c1y = start.y;
+    c2x = end.x   - Math.sign(dx) * k; c2y = end.y;
+  } else {
+    c1x = start.x; c1y = start.y + Math.sign(dy) * k;
+    c2x = end.x;   c2y = end.y   - Math.sign(dy) * k;
+  }
+  return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+}
+
+const edgeEls = [];
+EDGES.forEach((e, i) => {
+  const a = NODE_INDEX[e.from];
+  const b = NODE_INDEX[e.to];
+  if (!a || !b) return;
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', buildEdgePath(a, b));
+  path.setAttribute('class', 'edge' + (e.type === 'event' ? ' dashed' : '') + (e.type === 'data' ? ' dashed' : ''));
+  path.setAttribute('marker-end', 'url(#arrow)');
+  path.dataset.from = e.from;
+  path.dataset.to = e.to;
+  path.dataset.type = e.type;
+  edgesLayer.appendChild(path);
+  edgeEls.push(path);
+});
+
+const nodeEls = [];
+NODES.forEach(n => {
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('class', 'node' + (n.heart ? ' heart' : ''));
+  g.setAttribute('transform', `translate(${n.x},${n.y})`);
+  g.dataset.id = n.id;
+  g.dataset.cat = n.cat;
+  g.style.color = CATEGORIES[n.cat].hex;
+
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('width', n.w);
+  rect.setAttribute('height', n.h);
+  g.appendChild(rect);
+
+  const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  txt.setAttribute('x', n.w / 2);
+  txt.setAttribute('y', n.h / 2 + 3);
+  txt.textContent = n.label;
+  g.appendChild(txt);
+
+  const cat = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  cat.setAttribute('class', 'node-cat');
+  cat.setAttribute('x', n.w / 2);
+  cat.setAttribute('y', n.h / 2 - 10);
+  cat.textContent = CATEGORIES[n.cat].label;
+  g.appendChild(cat);
+
+  // Move main label down a bit to make room for category line
+  txt.setAttribute('y', n.h / 2 + 9);
+
+  g.addEventListener('mouseenter', () => { if (!dragState) highlightNode(n.id, true); });
+  g.addEventListener('mouseleave', () => { if (!dragState) highlightNode(null, false); });
+  g.addEventListener('mousedown', (e) => beginNodeDrag(e, n, g));
+
+  nodesLayer.appendChild(g);
+  nodeEls.push(g);
+});
+
+// ─── Drag-to-reposition ──────────────────────────────────────────────────
+// Mousedown on a node starts a drag candidate. If the mouse moves beyond a
+// 3px threshold we treat it as a drag (reposition + update edges); if it
+// doesn't, we treat it as a click (open the side panel).
+const DRAG_THRESHOLD_PX = 3;
+let dragState = null;
+
+function beginNodeDrag(e, node, gEl) {
+  if (e.button !== 0) return;
+  e.stopPropagation(); // prevent the SVG-background pan
+  const rect = svg.getBoundingClientRect();
+  const scaleX = viewBox.w / rect.width;
+  const scaleY = viewBox.h / rect.height;
+  dragState = {
+    node, gEl,
+    startClientX: e.clientX,
+    startClientY: e.clientY,
+    startNodeX: node.x,
+    startNodeY: node.y,
+    scaleX, scaleY,
+    moved: false,
+  };
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startClientX;
+  const dy = e.clientY - dragState.startClientY;
+  if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+  dragState.moved = true;
+  dragState.gEl.classList.add('dragging');
+  // Convert pixel delta into SVG-space delta using the viewBox scale at start.
+  // (Pan/zoom only changes viewBox on background events, so the captured scale
+  // stays correct for the duration of the drag.)
+  dragState.node.x = dragState.startNodeX + dx * dragState.scaleX;
+  dragState.node.y = dragState.startNodeY + dy * dragState.scaleY;
+  dragState.gEl.setAttribute('transform', `translate(${dragState.node.x},${dragState.node.y})`);
+  rerouteEdgesFor(dragState.node.id);
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (!dragState) return;
+  const state = dragState;
+  dragState = null;
+  state.gEl.classList.remove('dragging');
+  if (state.moved) {
+    saveLayout();
+  } else {
+    // Treat as click: open the side panel.
+    openSide(state.node.id);
+  }
+});
+
+// Only re-route the edges connected to a moved node — saves a full pass.
+function rerouteEdgesFor(nodeId) {
+  edgeEls.forEach((el) => {
+    if (el.dataset.from !== nodeId && el.dataset.to !== nodeId) return;
+    const a = NODE_INDEX[el.dataset.from];
+    const b = NODE_INDEX[el.dataset.to];
+    if (a && b) el.setAttribute('d', buildEdgePath(a, b));
+  });
+}
+
+// ─── Highlight / dim logic ───────────────────────────────────────────────
+let activeId = null;
+function highlightNode(id, persist) {
+  if (!id && activeId) { id = activeId; }
+  if (!id) {
+    // Clear
+    nodeEls.forEach(el => el.classList.remove('dim', 'active'));
+    edgeEls.forEach(el => el.classList.remove('dim', 'highlight'));
+    edgeEls.forEach(el => el.setAttribute('marker-end', 'url(#arrow)'));
+    return;
+  }
+  const neighbors = new Set([id]);
+  EDGES.forEach(e => {
+    if (e.from === id) neighbors.add(e.to);
+    if (e.to === id) neighbors.add(e.from);
+  });
+  nodeEls.forEach(el => {
+    const nid = el.dataset.id;
+    el.classList.toggle('dim', !neighbors.has(nid));
+    el.classList.toggle('active', nid === id);
+  });
+  edgeEls.forEach(el => {
+    const involved = el.dataset.from === id || el.dataset.to === id;
+    el.classList.toggle('highlight', involved);
+    el.classList.toggle('dim', !involved);
+    el.setAttribute('marker-end', involved ? 'url(#arrow-highlight)' : 'url(#arrow)');
+  });
+}
+
+// ─── Side panel ───────────────────────────────────────────────────────────
+const side = document.getElementById('side');
+const sideBody = document.getElementById('sideBody');
+document.getElementById('sideClose').addEventListener('click', closeSide);
+
+function openSide(id) {
+  const n = NODE_INDEX[id];
+  if (!n) return;
+  activeId = id;
+  highlightNode(id, true);
+
+  const calls = EDGES.filter(e => e.from === id).map(e => ({ id: e.to, type: e.type }));
+  const calledBy = EDGES.filter(e => e.to === id).map(e => ({ id: e.from, type: e.type }));
+  const catInfo = CATEGORIES[n.cat];
+
+  sideBody.innerHTML = `
+    <div class="cat-pill" style="background: ${catInfo.hex}22; color: ${catInfo.hex}; border: 1px solid ${catInfo.hex}55;">${catInfo.label}</div>
+    <h2>${escapeHtml(n.label)}</h2>
+    <div class="side-path">${escapeHtml(n.path || '')}</div>
+    <div class="side-desc">${escapeHtml(n.desc || '')}</div>
+
+    <div class="side-section">
+      <h4>Calls (${calls.length})</h4>
+      ${calls.length === 0 ? '<div class="relation-empty">No outgoing edges.</div>' :
+        `<ul class="relation-list">${calls.map(c => relationLi(c.id, c.type, '→')).join('')}</ul>`}
+    </div>
+
+    <div class="side-section">
+      <h4>Called by (${calledBy.length})</h4>
+      ${calledBy.length === 0 ? '<div class="relation-empty">No incoming edges.</div>' :
+        `<ul class="relation-list">${calledBy.map(c => relationLi(c.id, c.type, '←')).join('')}</ul>`}
+    </div>
+  `;
+  side.classList.add('open');
+  // Re-attach listeners to relation list items
+  sideBody.querySelectorAll('li[data-id]').forEach(li => {
+    li.addEventListener('click', () => openSide(li.dataset.id));
+  });
+}
+
+function relationLi(otherId, type, arrow) {
+  const other = NODE_INDEX[otherId];
+  if (!other) return '';
+  const cat = CATEGORIES[other.cat];
+  const typeLabel = { call: 'call', event: 'event', data: 'data', network: 'http' }[type] || type;
+  return `<li data-id="${otherId}">
+    <span class="arrow">${arrow}</span>
+    <span style="color: ${cat.hex}">${escapeHtml(other.label)}</span>
+    <span class="lbl">${typeLabel}</span>
+  </li>`;
+}
+
+function closeSide() {
+  side.classList.remove('open');
+  activeId = null;
+  highlightNode(null, false);
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+// ─── Pan + zoom ───────────────────────────────────────────────────────────
+let viewBox = { x: 0, y: 0, w: 1700, h: 1000 };
+function applyViewBox() {
+  svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+}
+applyViewBox();
+
+let panning = false;
+let panStart = null;
+svg.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.node')) return;
+  panning = true;
+  panStart = { x: e.clientX, y: e.clientY, vx: viewBox.x, vy: viewBox.y };
+  svg.classList.add('panning');
+  e.preventDefault();
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning || !panStart) return;
+  const rect = svg.getBoundingClientRect();
+  const scale = viewBox.w / rect.width;
+  viewBox.x = panStart.vx - (e.clientX - panStart.x) * scale;
+  viewBox.y = panStart.vy - (e.clientY - panStart.y) * scale;
+  applyViewBox();
+});
+window.addEventListener('mouseup', () => {
+  panning = false;
+  panStart = null;
+  svg.classList.remove('panning');
+});
+
+// Background click → close panel
+svg.addEventListener('click', (e) => {
+  if (!e.target.closest('.node')) closeSide();
+});
+
+// Wheel zoom — preserves the mouse-pointed location
+svg.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const px = viewBox.x + (mx / rect.width)  * viewBox.w;
+  const py = viewBox.y + (my / rect.height) * viewBox.h;
+  const zoomFactor = e.deltaY > 0 ? 1.12 : 0.89;
+  const newW = Math.max(400, Math.min(4000, viewBox.w * zoomFactor));
+  const newH = newW * (viewBox.h / viewBox.w);
+  viewBox.x = px - (mx / rect.width)  * newW;
+  viewBox.y = py - (my / rect.height) * newH;
+  viewBox.w = newW;
+  viewBox.h = newH;
+  applyViewBox();
+}, { passive: false });
+
+// ─── Search filter ────────────────────────────────────────────────────────
+const searchInput = document.getElementById('search');
+let searchTerm = '';
+searchInput.addEventListener('input', (e) => {
+  searchTerm = e.target.value.toLowerCase().trim();
+  applyFilters();
+});
+
+function applyFilters() {
+  nodeEls.forEach(el => {
+    const id = el.dataset.id;
+    const n = NODE_INDEX[id];
+    if (!n) return;
+    const catOk = catVisible[n.cat];
+    const searchOk = !searchTerm || n.label.toLowerCase().includes(searchTerm) || (n.path || '').toLowerCase().includes(searchTerm) || (n.desc || '').toLowerCase().includes(searchTerm);
+    const visible = catOk && searchOk;
+    el.style.display = visible ? '' : 'none';
+  });
+  edgeEls.forEach(el => {
+    const from = NODE_INDEX[el.dataset.from];
+    const to = NODE_INDEX[el.dataset.to];
+    const visible = from && to && catVisible[from.cat] && catVisible[to.cat];
+    el.style.display = visible ? '' : 'none';
+  });
+}
+
+// Re-route edges if window resizes (in case nodes ever move; future-proofing)
+function reroute() {
+  edgeEls.forEach((el) => {
+    const a = NODE_INDEX[el.dataset.from];
+    const b = NODE_INDEX[el.dataset.to];
+    if (a && b) el.setAttribute('d', buildEdgePath(a, b));
+  });
+}
+window.addEventListener('resize', reroute);
+
+// ─── Fit view on load ─────────────────────────────────────────────────────
+function fitView() {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  NODES.forEach(n => {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w);
+    maxY = Math.max(maxY, n.y + n.h);
+  });
+  const pad = 80;
+  viewBox.x = minX - pad;
+  viewBox.y = minY - pad;
+  viewBox.w = (maxX - minX) + pad * 2;
+  viewBox.h = (maxY - minY) + pad * 2;
+  applyViewBox();
+}
+fitView();
+
+// Reset-layout button — restores default positions, clears localStorage.
+const resetBtn = document.getElementById('resetLayoutBtn');
+if (hadSavedLayout) resetBtn.disabled = false;
+resetBtn.addEventListener('click', () => {
+  NODES.forEach(n => {
+    const def = DEFAULT_POSITIONS[n.id];
+    if (def) { n.x = def.x; n.y = def.y; }
+  });
+  // Reposition every node + re-route every edge.
+  nodeEls.forEach(el => {
+    const n = NODE_INDEX[el.dataset.id];
+    if (n) el.setAttribute('transform', `translate(${n.x},${n.y})`);
+  });
+  edgeEls.forEach((el) => {
+    const a = NODE_INDEX[el.dataset.from];
+    const b = NODE_INDEX[el.dataset.to];
+    if (a && b) el.setAttribute('d', buildEdgePath(a, b));
+  });
+  try { localStorage.removeItem(LAYOUT_STORAGE_KEY); } catch {}
+  resetBtn.disabled = true;
+  fitView();
+});
+
+// Open AgentRuntime by default so first paint shows the centerpiece
+setTimeout(() => openSide('agent-runtime'), 300);
+
+// Esc key closes side panel
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSide();
+  if (e.key === '/' && document.activeElement !== searchInput) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+});
+
+</script>
+</body>
+</html>

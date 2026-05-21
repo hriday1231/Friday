@@ -103,6 +103,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Wake word ─────────────────────────────────────────────────────────────
   getWakeWordConfig:  ()    => ipcRenderer.invoke('get-wake-word-config'),
   saveWakeWordConfig: (cfg) => ipcRenderer.invoke('save-wake-word-config', cfg),
+  // Tool auto-approve (title-bar permissions toggle)
+  getAutoApproveTools:  ()       => ipcRenderer.invoke('get-auto-approve-tools'),
+  saveAutoApproveTools: (enabled) => ipcRenderer.invoke('save-auto-approve-tools', { enabled }),
   wakeWordListPhrases: ()           => ipcRenderer.invoke('wake-word-list-phrases'),
   wakeWordStart:       (phrase)     => ipcRenderer.invoke('wake-word-start', { phrase }),
   wakeWordStop:        ()           => ipcRenderer.invoke('wake-word-stop'),

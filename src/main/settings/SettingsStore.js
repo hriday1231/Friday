@@ -76,6 +76,12 @@ class SettingsStore {
         ttsPitch:    1.0,
         wakeWordEnabled: false,
         wakeWordPhrase:  'hey_jarvis', // OpenWakeWord model id; see WakeWordService.PHRASES
+        // Auto-approve every tool call (no permission prompts). Default ON
+        // because Friday's current tool set has no destructive ops — every
+        // existing tool is either read-only (search, fetch) or already user-
+        // confirmable via the OS (open_url, launch_app). Users can disable
+        // this from the title-bar toggle if they ever want the prompts back.
+        autoApproveAllTools: true,
         modelSlots: {
           chat:   { model: 'gpt-oss:20b',           type: 'ollama' },
           vision: { model: 'llama3.2-vision:11b',   type: 'ollama' },
@@ -318,6 +324,15 @@ class SettingsStore {
       const normalized = String(phrase || 'hey_jarvis').toLowerCase().trim().replace(/\s+/g, '_');
       this.store.set('wakeWordPhrase', ALLOWED.has(normalized) ? normalized : 'hey_jarvis');
     }
+  }
+
+  // ----- Tool auto-approve toggle -----
+  getAutoApproveAllTools() {
+    // Default true (no prompts) — Friday has no destructive tools right now.
+    return this.store.get('autoApproveAllTools', true) !== false;
+  }
+  setAutoApproveAllTools(on) {
+    this.store.set('autoApproveAllTools', !!on);
   }
 }
 
