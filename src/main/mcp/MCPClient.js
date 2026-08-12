@@ -42,7 +42,7 @@ class MCPClientManager {
   /**
    * Load MCP server config, resolving env vars in declared values.
    * The returned env block is JUST the explicitly-listed keys plus the
-   * SAFE_SYSTEM_ENV whitelist — no other process.env entries are passed
+   * SAFE_SYSTEM_ENV whitelist - no other process.env entries are passed
    * through to the spawned subprocess.
    */
   loadConfig() {

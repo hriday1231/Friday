@@ -51,7 +51,7 @@ function shiftDate(dateStr, days) {
 }
 
 /**
- * Get the Sunday that starts the week containing dateStr (Sun–Sat convention).
+ * Get the Sunday that starts the week containing dateStr (Sun-Sat convention).
  */
 function weekStartOf(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -121,14 +121,14 @@ function formatEvent(e, mode) {
       weekday: mode === 'daily' ? undefined : 'short'
     }) + ' (all day)';
   } else if (mode === 'daily') {
-    dateTimeStr = `${start.toLocaleTimeString('en-US', timeOpts)} – ${end.toLocaleTimeString('en-US', timeOpts)}`;
+    dateTimeStr = `${start.toLocaleTimeString('en-US', timeOpts)} - ${end.toLocaleTimeString('en-US', timeOpts)}`;
   } else {
     const startStr = start.toLocaleString('en-US', { ...dateTimeOpts, weekday: 'short' });
     const endStr   = end.toLocaleTimeString('en-US', timeOpts);
-    dateTimeStr = `${startStr} – ${endStr}`;
+    dateTimeStr = `${startStr} - ${endStr}`;
   }
 
-  // Truncate event titles and descriptions and strip control chars — calendar
+  // Truncate event titles and descriptions and strip control chars - calendar
   // invites are an external trust boundary (anyone who shares an event with the
   // user can land arbitrary text here).
   const safeTitle = String(e.title || '(untitled)')
@@ -140,7 +140,7 @@ function formatEvent(e, mode) {
       .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, ' ')
       .replace(/\s+/g, ' ')
       .slice(0, 200);
-    out += ` — ${safeDesc}`;
+    out += ` - ${safeDesc}`;
   }
   return out;
 }

@@ -5,7 +5,7 @@
  * string. This enables tool call tracking, diff views, streaming without
  * flicker, cost accounting, and session replay.
  *
- * Part objects are plain JS objects — no classes, no methods.
+ * Part objects are plain JS objects - no classes, no methods.
  * They are stored as JSON in the `parts` column of the messages table.
  */
 
@@ -52,10 +52,10 @@ function makeReasoningPart(id) {
 
 /**
  * A tool invocation with full state machine.
- * @param {string} id        — unique part id
- * @param {string} callId    — tool_use id from the LLM response
+ * @param {string} id        - unique part id
+ * @param {string} callId    - tool_use id from the LLM response
  * @param {string} toolName
- * @param {object} input     — arguments passed to the tool
+ * @param {object} input     - arguments passed to the tool
  */
 function makeToolPart(id, callId, toolName, input) {
   return {
@@ -91,7 +91,7 @@ function makeStepFinishPart(id, index, tokens, costUSD) {
 }
 
 /**
- * Filesystem diff — emitted after any step that modifies files.
+ * Filesystem diff - emitted after any step that modifies files.
  * @param {Array<{path:string, diff:string, additions:number, deletions:number}>} files
  */
 function makePatchPart(id, files) {
@@ -99,7 +99,7 @@ function makePatchPart(id, files) {
 }
 
 /**
- * Inline error — rate limits, context overflow, tool errors.
+ * Inline error - rate limits, context overflow, tool errors.
  */
 function makeErrorPart(id, name, message, retry = false) {
   return { id, type: PartType.ERROR, name, message, retry, time: { start: Date.now(), end: Date.now() } };
@@ -143,7 +143,7 @@ function toolStateError(message) {
 function contentToParts(content, role) {
   const { randomUUID } = require('crypto');
   if (role === 'user') {
-    // User messages stay as plain text — parts only matter for assistant messages
+    // User messages stay as plain text - parts only matter for assistant messages
     return null;
   }
   if (!content) return [];

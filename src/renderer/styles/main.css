@@ -1,15 +1,15 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   Friday — Skeuomorphic Dark Grey / Dark Orange Theme
+   Friday - Skeuomorphic Dark Grey / Dark Orange Theme
 
    Design language: elements press upward from a matte dark-charcoal rubber
-   plane. Edges are continuous — defined by bevel shadows, not hard lines.
+   plane. Edges are continuous - defined by bevel shadows, not hard lines.
    Dark orange (#c85514) is the single accent: ember against the darkness.
    ───────────────────────────────────────────────────────────────────────── */
 
 :root {
   /* ── Surfaces ── */
-  --base:   #1a1a1a;   /* The rubber plane — deepest layer              */
-  --s0:     #222222;   /* Floor — slight raise above the plane          */
+  --base:   #1a1a1a;   /* The rubber plane - deepest layer              */
+  --s0:     #222222;   /* Floor - slight raise above the plane          */
   --s1:     #2b2b2b;   /* Card / panel level                            */
   --s2:     #343434;   /* Button / element level                        */
   --s3:     #3e3e3e;   /* Hover / top surface                           */
@@ -55,7 +55,7 @@
                   inset 0 1px 0 rgba(230,160,80,0.18),
                   0 0 12px var(--o-glow);
 
-  /* ── Borders — warm dark edges, not harsh lines ── */
+  /* ── Borders - warm dark edges, not harsh lines ── */
   --edge: rgba(0,0,0,0.45);
   --edge-warm: rgba(80,60,40,0.35);
 
@@ -88,7 +88,7 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--base);
-  /* very subtle noise texture via CSS — gives the 'rubber' feel */
+  /* very subtle noise texture via CSS - gives the 'rubber' feel */
   background-image:
     radial-gradient(ellipse at 30% 20%, rgba(80,50,30,0.04) 0%, transparent 60%),
     radial-gradient(ellipse at 70% 80%, rgba(0,0,0,0.08) 0%, transparent 60%);
@@ -118,7 +118,7 @@ body {
   color: var(--t-hi);
 }
 
-/* Friday logo — a raised orange medallion */
+/* Friday logo - a raised orange medallion */
 .friday-icon {
   width: 26px;
   height: 26px;
@@ -351,7 +351,7 @@ body {
 .incog-toggle-btn.active { color: #c9a9ff; background: rgba(155, 110, 230, 0.12); }
 .incog-toggle-btn.active:hover { background: rgba(155, 110, 230, 0.18); }
 
-/* Permissions toggle (title bar). Default state is "all permissions on" —
+/* Permissions toggle (title bar). Default state is "all permissions on" -
    shown as an open lock + green tint. Clicking switches to "prompts required"
    (closed lock + neutral tint). */
 .perm-toggle-btn {
@@ -367,7 +367,7 @@ body {
 .perm-toggle-btn[aria-pressed="true"]:hover { background: rgba(109, 217, 122, 0.16); }
 
 body[data-incognito="on"] .chat-messages::before {
-  content: "👻  Incognito — local only, nothing saved";
+  content: "👻  Incognito - local only, nothing saved";
   display: block;
   margin: 8px 14px 0;
   padding: 6px 10px;
@@ -438,6 +438,10 @@ body[data-incognito="on"] .chat-messages::before {
 .sugg-episode-age { font-size: 10px; color: var(--t-lo); margin-left: 4px; }
 .sugg-episode-digest { font-size: 11px; color: var(--t-lo); margin-top: 2px; line-height: 1.4; }
 .sugg-spinner { padding: 12px; text-align: center; color: var(--t-lo); font-size: 11px; }
+
+/* .chat-area needs min-width:0 - flex items default to min-width:auto and refuse
+   to shrink below their intrinsic content width. Latent bug, kept as a fix. */
+.chat-area { min-width: 0; }
 
 /* ── Task Queue Panel ────────────────────────────────────────────────── */
 .tqp-toggle-btn {
@@ -800,7 +804,7 @@ body[data-incognito="on"] .chat-messages::before {
   overflow: hidden;
 }
 
-/* The message list — a recessed tray pressed into the rubber plane */
+/* The message list - a recessed tray pressed into the rubber plane */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -878,7 +882,7 @@ body[data-incognito="on"] .chat-messages::before {
 
 .message.user { flex-direction: row-reverse; }
 
-/* Avatar tokens — raised circular pucks */
+/* Avatar tokens - raised circular pucks */
 .message-avatar {
   width: 32px;
   height: 32px;
@@ -906,7 +910,7 @@ body[data-incognito="on"] .chat-messages::before {
   box-shadow: var(--raise-sm), 0 0 8px var(--o-glow);
 }
 
-/* Message bubbles — raised slabs */
+/* Message bubbles - raised slabs */
 .message-content {
   max-width: 74%;
   padding: 11px 14px;
@@ -1020,7 +1024,7 @@ body[data-incognito="on"] .chat-messages::before {
 
 /* ── Markdown content ───────────────────────────────────────────────────── */
 .message-content-text {
-  white-space: normal;       /* HTML from marked — never render tag whitespace as gaps */
+  white-space: normal;       /* HTML from marked - never render tag whitespace as gaps */
   word-break: break-word;
   color: var(--t-hi);
 }
@@ -1097,7 +1101,7 @@ body[data-incognito="on"] .chat-messages::before {
   overflow-x: auto;
 }
 
-/* Copy button — top-right corner of the pre block */
+/* Copy button - top-right corner of the pre block */
 .copy-code-btn {
   position: absolute;
   top: 7px;
@@ -1136,7 +1140,7 @@ body[data-incognito="on"] .chat-messages::before {
   width: 100%;
   /* table-layout: fixed distributes width evenly. Without this, browsers
      fall back to "auto" sizing, which gives 99% of the width to whichever
-     column has the longest unbroken string — squeezing the other columns
+     column has the longest unbroken string - squeezing the other columns
      down to single-character widths and producing per-letter wrapping in
      the headers. */
   table-layout: fixed;
@@ -1527,8 +1531,8 @@ body[data-incognito="on"] .chat-messages::before {
 .cancel-btn:hover { background: rgba(130,30,15,0.5); }
 .cancel-btn:active { box-shadow: var(--press-in); }
 
-/* ── Input area — recessed tray ─────────────────────────────────────────── */
-/* ── Input area — unified card ───────────────────────────────────────────── */
+/* ── Input area - recessed tray ─────────────────────────────────────────── */
+/* ── Input area - unified card ───────────────────────────────────────────── */
 
 .input-area {
   background: var(--s1);
@@ -2040,7 +2044,7 @@ body[data-incognito="on"] .chat-messages::before {
 }
 .code-stop-btn:hover { background: rgba(244,67,54,0.2); }
 
-/* Code mode — tint the input area border to distinguish from chat */
+/* Code mode - tint the input area border to distinguish from chat */
 body[data-mode="code"] .input-area {
   border-top-color: rgba(80, 160, 80, 0.3);
 }
@@ -3068,7 +3072,7 @@ mark.hl {
 
 .message-images img:hover { opacity: 0.88; }
 
-/* ── Voice input — mic button recording state ───────────────────────────── */
+/* ── Voice input - mic button recording state ───────────────────────────── */
 
 .mic-btn.recording {
   background: rgba(200, 40, 40, 0.22);

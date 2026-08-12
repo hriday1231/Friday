@@ -1,9 +1,9 @@
 /**
- * ModelSelector — compact pill + popover model picker.
+ * ModelSelector - compact pill + popover model picker.
  *
  * Public API:
  *   getSelectedModel()  → { model, modelType }
- *   setHasImage(bool)   — switches to vision slot when true
+ *   setHasImage(bool)   - switches to vision slot when true
  *   isCurrentModelVision() → bool
  *   updateSlot(key, model, type)
  *   getSlots()
@@ -87,7 +87,7 @@ class ModelSelector {
       this._switchTab(btn.dataset.type);
     });
 
-    // Model item clicks bubble up to picker — handled per-item in _renderList
+    // Model item clicks bubble up to picker - handled per-item in _renderList
   }
 
   async _init() {
@@ -129,7 +129,7 @@ class ModelSelector {
       if (type === 'ollama') { btn.hidden = false; return; }
       btn.hidden = this._incognito || !this._configured[type];
     });
-    // Cloud providers are blocked in incognito — force local.
+    // Cloud providers are blocked in incognito - force local.
     if (this._incognito && this.currentModelType !== 'ollama') {
       this.currentModelType = 'ollama';
     }
@@ -190,10 +190,10 @@ class ModelSelector {
       const empty = document.createElement('div');
       empty.className = 'mp-empty';
       empty.textContent = {
-        ollama:      'No Ollama models — is Ollama running?',
-        groq:        'No Groq models — add API key in Settings → Models',
-        gemini:      'No Gemini models — add API key in Settings → Models',
-        openrouter:  'No OpenRouter models — add API key in Settings → Models',
+        ollama:      'No Ollama models - is Ollama running?',
+        groq:        'No Groq models - add API key in Settings → Models',
+        gemini:      'No Gemini models - add API key in Settings → Models',
+        openrouter:  'No OpenRouter models - add API key in Settings → Models',
       }[this.currentModelType] || 'No models available';
       this._listEl.appendChild(empty);
       return;

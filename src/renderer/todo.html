@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
+  <title>Friday - To-Do</title>
+  <link rel="stylesheet" href="styles/main.css" />
+  <link rel="stylesheet" href="styles/todo.css" />
+</head>
+<body class="todo-body">
+
+  <!-- ── Pomodoro bar ─────────────────────────────────────────────────────── -->
+  <div class="pomo-bar" id="pomoBar" data-phase="idle">
+    <div class="pomo-clock" id="pomoClock">25:00</div>
+    <div class="pomo-meta">
+      <div class="pomo-phase" id="pomoPhase">Ready</div>
+      <div class="pomo-task" id="pomoTask">No task selected</div>
+    </div>
+    <div class="pomo-rounds" id="pomoRounds" title="Rounds until a long break"></div>
+    <div class="pomo-actions">
+      <button class="pomo-btn primary" id="pomoStartBtn">Start</button>
+      <button class="pomo-btn" id="pomoResetBtn" title="Reset this interval">Reset</button>
+      <button class="pomo-btn" id="pomoSkipBtn" title="Skip to the next interval">Skip</button>
+    </div>
+    <div class="pomo-progress"><div class="pomo-progress-fill" id="pomoProgress"></div></div>
+  </div>
+
+  <!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
+  <div class="todo-toolbar">
+    <div class="view-switch" role="tablist" aria-label="View">
+      <button class="view-btn active" id="viewTableBtn" data-view="table" role="tab">☰ Table</button>
+      <button class="view-btn"        id="viewBoardBtn" data-view="board" role="tab">▤ Board</button>
+    </div>
+
+    <div class="todo-search-wrap">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="searchInput" class="todo-search" placeholder="Search tasks and notes…" autocomplete="off" spellcheck="false">
+    </div>
+
+    <select id="categoryFilter" class="todo-select" title="Filter by category">
+      <option value="">All categories</option>
+    </select>
+
+    <label class="todo-check-label" title="Hide anything in a Done column">
+      <input type="checkbox" id="hideDoneToggle"> Hide done
+    </label>
+
+    <span class="todo-stats" id="todoStats"></span>
+
+    <button class="todo-btn" id="columnsBtn" title="Choose and rename columns">Columns</button>
+    <button class="todo-btn" id="manageBtn" title="Add, rename, recolour and delete categories and board columns">Categories</button>
+    <button class="todo-btn" id="settingsBtn" title="Pomodoro settings">Timer</button>
+  </div>
+
+  <!-- ── Quick add ────────────────────────────────────────────────────────── -->
+  <div class="quick-add">
+    <input id="quickAddInput" class="quick-add-input" maxlength="200" autocomplete="off" spellcheck="false"
+           placeholder="Add a task…  try “Email Sam tomorrow !high #work” - Enter to add">
+    <button class="quick-add-btn" id="quickAddBtn">Add</button>
+  </div>
+
+  <!-- ── Views + detail drawer ────────────────────────────────────────────────
+       The drawer is a SIBLING of the view area, not an overlay on the window.
+       As a fixed full-height overlay it covered the toolbar and the Pomodoro
+       controls, so selecting a task locked you out of the timer - which is
+       exactly when you want it, since the timer is task-linked. -->
+  <div class="todo-content">
+    <main class="todo-main">
+      <div id="tableView" class="table-view">
+        <table class="todo-table">
+          <thead><tr id="tableHead"></tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div class="todo-empty hidden" id="tableEmpty">Nothing here yet.</div>
+      </div>
+
+      <div id="boardView" class="board-view hidden">
+        <div class="board-columns" id="boardColumns"></div>
+      </div>
+    </main>
+
+    <aside class="drawer hidden" id="detailDrawer" aria-label="Task details">
+      <div class="drawer-header">
+        <span class="drawer-title" id="drawerTitle">Task</span>
+        <button class="drawer-close" id="drawerClose" title="Close">✕</button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+  </div>
+
+  <!-- ── Popovers ─────────────────────────────────────────────────────────── -->
+  <div class="popover hidden" id="columnsPopover" aria-label="Columns">
+    <div class="popover-header">Columns <span class="popover-hint">drag to reorder · click a name to rename</span></div>
+    <div class="popover-body" id="columnsList"></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop"></div>
+
+  <div class="modal hidden" id="manageModal" role="dialog" aria-label="Manage">
+    <div class="modal-header"><span id="manageTitle">Manage</span><button class="drawer-close" id="manageClose">✕</button></div>
+    <div class="modal-body">
+      <section class="manage-section">
+        <h3>Board columns <span class="popover-hint">these are your statuses</span></h3>
+        <div id="statusList" class="manage-list"></div>
+        <div class="manage-add">
+          <input id="newStatusName" class="todo-input" maxlength="40" placeholder="New column name">
+          <input id="newStatusColor" type="color" class="color-input" value="#c85514" title="Colour">
+          <label class="todo-check-label" title="Tasks in this column count as finished">
+            <input type="checkbox" id="newStatusDone"> Counts as done
+          </label>
+          <button class="todo-btn primary" id="addStatusBtn">Add</button>
+        </div>
+      </section>
+
+      <section class="manage-section">
+        <h3>Categories</h3>
+        <div id="categoryList" class="manage-list"></div>
+        <div class="manage-add">
+          <input id="newCategoryName" class="todo-input" maxlength="40" placeholder="New category name">
+          <input id="newCategoryColor" type="color" class="color-input" value="#4f9d5c" title="Colour">
+          <button class="todo-btn primary" id="addCategoryBtn">Add</button>
+        </div>
+      </section>
+
+      <section class="manage-section">
+        <h3>Housekeeping</h3>
+        <button class="todo-danger-btn" id="clearDoneBtn">Clear all done tasks</button>
+      </section>
+    </div>
+  </div>
+
+  <!-- Text prompt. Electron does not implement window.prompt(): it returns null
+       without showing anything, which is why "Add sub-task" silently did nothing. -->
+  <div class="modal ask-modal hidden" id="askModal" role="dialog" aria-label="Enter a value">
+    <div class="modal-header"><span id="askTitle">Add</span><button class="drawer-close" id="askClose">✕</button></div>
+    <div class="modal-body">
+      <input type="text" id="askInput" class="todo-input" maxlength="200" autocomplete="off" spellcheck="false">
+      <p class="todo-hint" id="askHint"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="todo-btn" id="askCancel">Cancel</button>
+      <button class="todo-btn primary" id="askOk">Add</button>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="timerModal" role="dialog" aria-label="Pomodoro settings">
+    <div class="modal-header"><span>Pomodoro</span><button class="drawer-close" id="timerClose">✕</button></div>
+    <div class="modal-body">
+      <label class="field"><span>Work length (min)</span><input type="number" id="cfgWork" min="1" max="180" class="todo-input"></label>
+      <label class="field"><span>Short break (min)</span><input type="number" id="cfgBreak" min="1" max="60" class="todo-input"></label>
+      <label class="field"><span>Long break (min)</span><input type="number" id="cfgLongBreak" min="1" max="120" class="todo-input"></label>
+      <label class="field"><span>Rounds until long break</span><input type="number" id="cfgRounds" min="1" max="12" class="todo-input"></label>
+      <label class="field row"><input type="checkbox" id="cfgAutoBreak"><span>Start breaks automatically</span></label>
+      <label class="field row"><input type="checkbox" id="cfgAutoWork"><span>Start the next work interval automatically</span></label>
+      <p class="todo-hint">Finishing a work interval adds one 🍅 to the selected task.</p>
+    </div>
+    <div class="modal-actions"><button class="todo-btn primary" id="timerSave">Save</button></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="todo.js"></script>
+</body>
+</html>

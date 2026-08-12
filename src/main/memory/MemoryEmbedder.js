@@ -1,5 +1,5 @@
 /**
- * MemoryEmbedder — calls Ollama's embedding API from the main (Node.js) process.
+ * MemoryEmbedder - calls Ollama's embedding API from the main (Node.js) process.
  *
  * Used for:
  *   - Embedding memory facts when they are saved
@@ -27,14 +27,14 @@ class MemoryEmbedder {
 
   get _baseUrl() {
     if (process.env.OLLAMA_BASE_URL) return process.env.OLLAMA_BASE_URL;
-    try { return require('../settings/SettingsStore').getOllamaBaseUrl() || 'http://localhost:11434'; } catch { return 'http://localhost:11434'; }
+    try { return require('../settings/SettingsStore').getOllamaBaseUrl() || 'http://127.0.0.1:11434'; } catch { return 'http://127.0.0.1:11434'; }
   }
 
   // ── Cosine similarity ──────────────────────────────────────────────────────
 
   /**
    * Cosine similarity between two equal-dimensional vectors.
-   * Returns 0 (not NaN) for mismatched-dim or empty inputs — so callers get a
+   * Returns 0 (not NaN) for mismatched-dim or empty inputs - so callers get a
    * deterministic "no match" signal instead of a silent NaN-cascade.
    */
   cosine(a, b) {

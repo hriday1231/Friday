@@ -1,5 +1,5 @@
 /* ============================================================
-   Settings — Skeuomorphic dark-grey / dark-orange theme
+   Settings - Skeuomorphic dark-grey / dark-orange theme
    Matches the design token system in main.css
    ============================================================ */
 
@@ -506,7 +506,7 @@ body {
   cursor: pointer;
 }
 
-/* Decay bar — thin left-edge strip showing relevance weight */
+/* Decay bar - thin left-edge strip showing relevance weight */
 .memory-decay-bar {
   width: 3px;
   border-radius: 2px 0 0 2px;

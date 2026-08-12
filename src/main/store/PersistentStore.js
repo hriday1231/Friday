@@ -1,18 +1,18 @@
 /**
- * PersistentStore — SQLite-backed storage for sessions, messages, and memory.
+ * PersistentStore - SQLite-backed storage for sessions, messages, and memory.
  *
  * Uses sql.js (pure-JS SQLite, zero native compilation) so it works on any
  * machine without build tools.
  *
  * Storage layout:
- *   <userData>/friday/friday.db   — SQLite database
- *   <userData>/friday/meta.json   — legacy JSON (migrated on first run, then renamed)
+ *   <userData>/friday/friday.db   - SQLite database
+ *   <userData>/friday/meta.json   - legacy JSON (migrated on first run, then renamed)
  *
  * All queries are synchronous (sql.js keeps the DB in memory).
  * Disk writes are debounced (flush ≤500ms after last write) with immediate
  * flush for destructive operations.
  *
- * Public API is identical to the old JSON-backed store — no other files change.
+ * Public API is identical to the old JSON-backed store - no other files change.
  */
 
 const fs   = require('fs');
@@ -28,7 +28,7 @@ class PersistentStore {
     this._dbPath  = path.join(this._dir, 'friday.db');
     this._metaPath = path.join(this._dir, 'meta.json');
     this._msgDir  = path.join(this._dir, 'messages');
-    this._db      = null;     // sql.js Database instance — set by init()
+    this._db      = null;     // sql.js Database instance - set by init()
     this._flushTimer = null;  // debounce handle
     fs.mkdirSync(this._dir, { recursive: true });
   }
@@ -381,14 +381,14 @@ class PersistentStore {
 
   /**
    * @param {string}   sessionId
-   * @param {string}   role        — 'user' | 'assistant' | 'tool'
-   * @param {string}   content     — plain text (for search / legacy compat)
-   * @param {string}   [type]      — 'chat' | 'code'
+   * @param {string}   role        - 'user' | 'assistant' | 'tool'
+   * @param {string}   content     - plain text (for search / legacy compat)
+   * @param {string}   [type]      - 'chat' | 'code'
    * @param {Array}    [images]
    * @param {object}   [opts]
-   * @param {Array}    [opts.parts]   — Part[] array (assistant messages)
-   * @param {object}   [opts.usage]   — token usage object
-   * @param {string}   [opts.display] — what the user actually typed (may differ from content)
+   * @param {Array}    [opts.parts]   - Part[] array (assistant messages)
+   * @param {object}   [opts.usage]   - token usage object
+   * @param {string}   [opts.display] - what the user actually typed (may differ from content)
    */
   addMessage(sessionId, role, content, type = 'chat', images = [], { parts = null, usage = null, display = null } = {}) {
     const id  = randomUUID();
@@ -518,6 +518,17 @@ class PersistentStore {
     });
   }
 
+  /**
+   * Recent user/assistant pairs for prompt replay.
+   *
+   * `tools` lists the tool names the assistant actually invoked that turn, read
+   * back from the persisted parts. Replayed history is otherwise text-only, so a
+   * turn that opened three tabs comes back looking like the assistant merely SAID
+   * "Netflix is open, next Instagram..." - and small models copy that, narrating
+   * actions instead of calling tools. See the note in AGENTS.md; surfacing this
+   * field to the model was measured and did NOT fix it, so nothing consumes it
+   * yet. It is kept because any real fix has to start from this data.
+   */
   getRecentPairs(sessionId, limit = 10) {
     const rows  = this.getMessages(sessionId);
     const pairs = [];
@@ -526,7 +537,10 @@ class PersistentStore {
         // Use display (original user text) when available; fall back to content
         const userText      = rows[i].display || rows[i].content;
         const assistantText = rows[i + 1].content;
-        pairs.push({ user: userText, assistant: assistantText });
+        const tools = Array.isArray(rows[i + 1].parts)
+          ? rows[i + 1].parts.filter(p => p?.type === 'tool' && p.toolName).map(p => p.toolName)
+          : [];
+        pairs.push({ user: userText, assistant: assistantText, tools });
         i++;
       }
     }
@@ -571,7 +585,7 @@ class PersistentStore {
       [id, content, source, category, mode, now, now, now]
     );
 
-    // Background embedding — record the model name + dim alongside so we can
+    // Background embedding - record the model name + dim alongside so we can
     // detect mismatches if the embedding model is later swapped.
     memoryEmbedder.embed(content).then(emb => {
       if (emb && Array.isArray(emb)) {
@@ -639,7 +653,7 @@ class PersistentStore {
         if (m.embedding) {
           try { emb = JSON.parse(m.embedding); } catch { emb = null; }
         }
-        // Skip cosine when stored vector is from a different model — its cosine
+        // Skip cosine when stored vector is from a different model - its cosine
         // against queryEmb would be NaN-cascade-to-zero and noise-ranked.
         const usable   = emb && Array.isArray(emb) && emb.length === queryDim;
         const cosScore = usable ? memoryEmbedder.cosine(queryEmb, emb) : 0;
@@ -769,7 +783,7 @@ class PersistentStore {
   async getRelevantEpisodes(query, currentSessionId, topK = 3) {
     const MIN_SCORE = 0.35;
 
-    // Check rows first — avoids a ~3s embedder round-trip when there are no
+    // Check rows first - avoids a ~3s embedder round-trip when there are no
     // episodes to compare against (common for fresh installs).
     const rows = this._all(
       `SELECT id, title, updated_at, episode_digest, episode_embedding, episode_model, episode_dim

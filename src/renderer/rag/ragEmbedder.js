@@ -1,5 +1,5 @@
 /**
- * RAGEmbedder — calls Ollama's embedding API for dense vector retrieval.
+ * RAGEmbedder - calls Ollama's embedding API for dense vector retrieval.
  * Gracefully falls back if Ollama or nomic-embed-text is unavailable.
  *
  * Exposed as window.RAGEmbedder (singleton).
@@ -7,7 +7,7 @@
 class RAGEmbedder {
   constructor() {
     this._baseUrl   = (typeof process !== 'undefined' && process.env?.OLLAMA_BASE_URL)
-                      || 'http://localhost:11434';
+                      || 'http://127.0.0.1:11434';
     this._model     = 'nomic-embed-text';
     this._available = null; // null=unknown, true=yes, false=no
   }

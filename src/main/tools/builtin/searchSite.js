@@ -46,7 +46,7 @@ const declaration = {
       },
       incognito: {
         type: 'boolean',
-        description: 'Open in private / incognito window. Defaults to false — only set to true when the user explicitly asks for incognito/private.',
+        description: 'Open in private / incognito window. Defaults to false - only set to true when the user explicitly asks for incognito/private.',
       },
     },
     required: ['site', 'query'],

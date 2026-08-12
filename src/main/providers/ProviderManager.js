@@ -1,5 +1,5 @@
 /**
- * ProviderManager — routes a model name to the right LLM provider.
+ * ProviderManager - routes a model name to the right LLM provider.
  *
  * Per-mode tuning (temperature, max tokens) lives on each provider via
  * BaseProvider helpers; this class is just a router with a model-list cache.
@@ -17,7 +17,7 @@
 
 class ProviderManager {
   /**
-   * @param {object} providers — map of provider instances
+   * @param {object} providers - map of provider instances
    * @param {object} [providers.ollama]
    * @param {object} [providers.groq]
    * @param {object} [providers.gemini]

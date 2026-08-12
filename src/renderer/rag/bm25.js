@@ -1,5 +1,5 @@
 /**
- * BM25Lite — dependency-free BM25 retrieval for the renderer process.
+ * BM25Lite - dependency-free BM25 retrieval for the renderer process.
  *
  * Usage:
  *   const bm = new BM25Lite();

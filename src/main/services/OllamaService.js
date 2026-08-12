@@ -4,7 +4,7 @@ require('dotenv').config();
 class OllamaService {
   static get baseURL() {
     if (process.env.OLLAMA_BASE_URL) return process.env.OLLAMA_BASE_URL;
-    try { return require('../settings/SettingsStore').getOllamaBaseUrl() || 'http://localhost:11434'; } catch { return 'http://localhost:11434'; }
+    try { return require('../settings/SettingsStore').getOllamaBaseUrl() || 'http://127.0.0.1:11434'; } catch { return 'http://127.0.0.1:11434'; }
   }
 
   /** Preferred model name for fallback when Gemini fails */

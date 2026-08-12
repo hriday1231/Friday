@@ -1,5 +1,5 @@
 /**
- * SessionContext — per-session state for the agent runtime.
+ * SessionContext - per-session state for the agent runtime.
  * One SessionContext is created per chat session and carries the abort
  * controller + permission policy + cost tracker for that session.
  */
@@ -10,9 +10,9 @@ class SessionContext {
   /**
    * @param {object} opts
    * @param {string}      opts.sessionId
-   * @param {object|null} opts.agent           — optional agent persona
-   * @param {object}      opts.permissionPolicy — PermissionPolicy instance
-   * @param {object}      opts.costTracker      — CostTracker instance
+   * @param {object|null} opts.agent           - optional agent persona
+   * @param {object}      opts.permissionPolicy - PermissionPolicy instance
+   * @param {object}      opts.costTracker      - CostTracker instance
    */
   constructor({ sessionId, agent = null, permissionPolicy, costTracker }) {
     if (!sessionId)        throw new Error('SessionContext: sessionId is required');

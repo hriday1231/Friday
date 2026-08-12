@@ -2,7 +2,7 @@ const GoogleCalendarService = require('../../services/GoogleCalendarService');
 
 const declaration = {
   name: 'delete_calendar_event',
-  description: 'Delete a calendar event. Use when the user wants to remove or cancel an event. You need the event id—use get_calendar_summary first to find it.',
+  description: 'Delete a calendar event. Use when the user wants to remove or cancel an event. You need the event id-use get_calendar_summary first to find it.',
   parameters: {
     type: 'object',
     properties: {

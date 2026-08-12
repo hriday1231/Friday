@@ -69,7 +69,7 @@ function loadTokens() {
     const content = fs.readFileSync(p, 'utf8');
     if (content.startsWith(TOKEN_ENC_PREFIX)) {
       const ss = _safeStorage();
-      if (!ss) return null; // ciphertext present but key unavailable — fail closed
+      if (!ss) return null; // ciphertext present but key unavailable - fail closed
       const buf = Buffer.from(content.slice(TOKEN_ENC_PREFIX.length).trim(), 'base64');
       const json = ss.decryptString(buf);
       return JSON.parse(json);
@@ -303,7 +303,7 @@ class GoogleCalendarService {
   /** Path of the token file (so callers can show users where it lives). */
   getTokenPath() { return getTokenPath(); }
 
-  /** Wipe the cached OAuth tokens — used by the "disconnect" UI action. */
+  /** Wipe the cached OAuth tokens - used by the "disconnect" UI action. */
   logout() { clearTokens(); }
 
   /**

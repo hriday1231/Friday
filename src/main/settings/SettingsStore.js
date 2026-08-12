@@ -3,7 +3,7 @@ const Store = require('electron-store');
 // Lazily resolved Electron safeStorage. Returned getter returns null if
 // safeStorage isn't ready (renderer-only module loads, pre-app-ready, or
 // older Electron versions). When null, we fall back to plaintext to keep
-// the app functional — but log so the user knows the keys aren't encrypted.
+// the app functional - but log so the user knows the keys aren't encrypted.
 let _safeStorageWarned = false;
 function _safe() {
   try {
@@ -34,7 +34,7 @@ function _decrypt(stored) {
   if (!stored || typeof stored !== 'string') return '';
   if (!stored.startsWith(ENC_PREFIX)) return stored; // legacy plaintext value
   const ss = _safe();
-  if (!ss) return ''; // ciphertext present but no key available — fail closed
+  if (!ss) return ''; // ciphertext present but no key available - fail closed
   try {
     const buf = Buffer.from(stored.slice(ENC_PREFIX.length), 'base64');
     return ss.decryptString(buf);
@@ -50,7 +50,7 @@ function _decrypt(stored) {
  * Cloud API keys are encrypted at rest via Electron safeStorage (DPAPI on
  * Windows, Keychain on macOS, Secret Service / kwallet on Linux). Reads
  * transparently decrypt; writes transparently encrypt. Legacy plaintext
- * values are still readable so existing installs upgrade in place — they're
+ * values are still readable so existing installs upgrade in place - they're
  * re-encrypted the next time the user saves.
  */
 class SettingsStore {
@@ -68,7 +68,7 @@ class SettingsStore {
         geminiApiKey: '',
         braveApiKey: '',
         openRouterApiKey: '',
-        ollamaBaseUrl: 'http://localhost:11434',
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
         hotkey: 'CommandOrControl+Shift+Space',
         ttsAutoRead: false,
         ttsVoice:    '',    // SpeechSynthesis voice name; empty = browser default
@@ -76,11 +76,12 @@ class SettingsStore {
         ttsPitch:    1.0,
         wakeWordEnabled: false,
         wakeWordPhrase:  'hey_jarvis', // OpenWakeWord model id; see WakeWordService.PHRASES
-        // Auto-approve every tool call (no permission prompts). Default ON
-        // because Friday's current tool set has no destructive ops — every
-        // existing tool is either read-only (search, fetch) or already user-
-        // confirmable via the OS (open_url, launch_app). Users can disable
-        // this from the title-bar toggle if they ever want the prompts back.
+        // Auto-approve tool calls (no permission prompts). Default ON: selects
+        // PermissionPolicy.fullyOpen(), which auto-allows every tiered builtin -
+        // including the two in TIER_DANGER, delete_calendar_event and open_url.
+        // Tools with no tier (MCP-server tools) still prompt once per session
+        // regardless; see _tierFor() in PermissionManager.js. Users can turn the
+        // prompts back on from the title-bar toggle.
         autoApproveAllTools: true,
         modelSlots: {
           chat:   { model: 'gpt-oss:20b',           type: 'ollama' },
@@ -200,11 +201,11 @@ class SettingsStore {
   // ----- Ollama base URL -----
 
   getOllamaBaseUrl() {
-    return this.store.get('ollamaBaseUrl', 'http://localhost:11434');
+    return this.store.get('ollamaBaseUrl', 'http://127.0.0.1:11434');
   }
 
   setOllamaBaseUrl(url) {
-    this.store.set('ollamaBaseUrl', (url || 'http://localhost:11434').trim());
+    this.store.set('ollamaBaseUrl', (url || 'http://127.0.0.1:11434').trim());
   }
 
   // ----- Global hotkey -----
@@ -279,7 +280,7 @@ class SettingsStore {
     try { parsed = new URL(trimmed); }
     catch { throw new Error(`Invalid URL: ${trimmed}`); }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(`Refusing URL with protocol "${parsed.protocol}" — only http(s) is allowed`);
+      throw new Error(`Refusing URL with protocol "${parsed.protocol}" - only http(s) is allowed`);
     }
     return parsed.toString();
   }
@@ -328,7 +329,7 @@ class SettingsStore {
 
   // ----- Tool auto-approve toggle -----
   getAutoApproveAllTools() {
-    // Default true (no prompts) — Friday has no destructive tools right now.
+    // Default true → PermissionPolicy.fullyOpen(). See the defaults block above.
     return this.store.get('autoApproveAllTools', true) !== false;
   }
   setAutoApproveAllTools(on) {

@@ -20,7 +20,7 @@ const declaration = {
   }
 };
 
-// Strip control characters and cap each field — search snippets are
+// Strip control characters and cap each field - search snippets are
 // attacker-controlled (anyone with SEO access can write descriptions).
 function _safeField(s, maxLen) {
   return String(s || '').replace(/[\x00-\x08\x0B-\x1F\x7F]/g, ' ').slice(0, maxLen);

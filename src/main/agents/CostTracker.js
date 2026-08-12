@@ -1,11 +1,11 @@
 /**
- * CostTracker — per-session token and cost accounting.
+ * CostTracker - per-session token and cost accounting.
  *
  * Tracks input / output / cache-create / cache-read tokens per assistant turn
  * and computes a running USD cost from a static pricing table (rates current
  * as of April 2026). Usage is embedded in each assistant message's `usage`
  * field so cumulative cost can be reconstructed from session history on
- * resume — no external state required.
+ * resume - no external state required.
  */
 
 'use strict';
@@ -42,7 +42,7 @@ function pricingForModel(modelId = '') {
 
 class CostTracker {
   /**
-   * @param {string} modelId — used to look up pricing tier
+   * @param {string} modelId - used to look up pricing tier
    */
   constructor(modelId = '') {
     this.pricing = pricingForModel(modelId);

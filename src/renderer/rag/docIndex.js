@@ -1,10 +1,10 @@
 /**
- * DocIndex — per-session document chunking, indexing, and retrieval.
+ * DocIndex - per-session document chunking, indexing, and retrieval.
  *
  * Retrieval strategy (best available):
- *   1. Hybrid  — cosine similarity (nomic-embed-text) + BM25 via RRF  (best)
- *   2. BM25    — pure keyword matching, instant, no Ollama needed      (fallback)
- *   3. Full    — inject entire document when it's short enough         (small docs)
+ *   1. Hybrid  - cosine similarity (nomic-embed-text) + BM25 via RRF  (best)
+ *   2. BM25    - pure keyword matching, instant, no Ollama needed      (fallback)
+ *   3. Full    - inject entire document when it's short enough         (small docs)
  *
  * Exposed as window.DocIndex (singleton).
  */
@@ -40,9 +40,9 @@ class DocIndex {
   /**
    * Index + embed a document asynchronously.
    * Calls onProgress(done, total, phase) where phase is:
-   *   'embedding'  — in progress (done/total chunks embedded)
-   *   'done'       — all embeddings ready
-   *   'failed'     — Ollama unavailable or model missing (BM25 still works)
+   *   'embedding'  - in progress (done/total chunks embedded)
+   *   'done'       - all embeddings ready
+   *   'failed'     - Ollama unavailable or model missing (BM25 still works)
    *
    * Returns chunk count.
    */
@@ -93,7 +93,7 @@ class DocIndex {
     if (!entry) return [];
     if (entry.chunks.length < RAG_THRESHOLD) return entry.chunks; // small: return all
 
-    // BM25 results (always computed — used in both hybrid and fallback)
+    // BM25 results (always computed - used in both hybrid and fallback)
     const bm25Results = entry.bm25.search(queryText, topK * 2);
 
     // Hybrid if semantic embeddings are ready

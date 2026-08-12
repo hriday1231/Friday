@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Friday — Architecture Map</title>
+<title>Friday - Architecture Map</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -177,10 +177,23 @@
   }
 
   /* ── Graph canvas ──────────────────────────────────────────────────────── */
+  /* Reserve room at top for the chrome bar (search/legend/reset) and at the
+     bottom for the hint pill, so SVG content never renders behind them. The
+     reserved space scales up on narrow viewports where the chrome wraps. */
   #graph {
-    position: fixed; inset: 0;
+    position: fixed;
+    top: 64px;
+    left: 0;
+    right: 0;
+    bottom: 48px;
     cursor: grab;
     user-select: none;
+  }
+  @media (max-width: 900px) {
+    #graph { top: 110px; bottom: 56px; }
+  }
+  @media (max-width: 600px) {
+    #graph { top: 140px; bottom: 64px; }
   }
   #graph.panning { cursor: grabbing; }
   #graph .edge {
@@ -452,7 +465,7 @@ const CATEGORIES = {
 // All x/y are top-left of node, in SVG coords.
 // Node width defaults to 170; height 50.
 const NODES = [
-  // ─── Renderer column (x ≈ 60–230) ─────────────────────────────────────
+  // ─── Renderer column (x ≈ 60-230) ─────────────────────────────────────
   { id: 'renderer-js',   label: 'renderer.js',          cat: 'renderer', x:  60, y:  90,
     path: 'src/renderer/renderer.js',
     desc: 'Top-level renderer orchestration: session list, suggestions, memory proposal banners, wake-word boot, voice events.' },
@@ -467,7 +480,7 @@ const NODES = [
     desc: 'Per-session document indexing. BM25 keyword index plus chunk embeddings (via Ollama nomic-embed-text over IPC). Used when the user pastes/drops PDFs or long text into chat.' },
   { id: 'wake-renderer', label: 'wakeWord.js',          cat: 'renderer', x:  60, y: 400,
     path: 'src/renderer/wakeWord.js',
-    desc: 'Captures 16 kHz mono Float32 audio via AudioWorklet. Batches worklet frames into 80 ms chunks before IPC to cut traffic ~10×. On wake-detected, a tiny RMS-based VAD runs: it ends capture on 600 ms of sustained silence after speech (typical ~1.5–2.5 s for a short command, 1.5 s if nothing spoken) and only then ships a WAV blob to whisper-cli for STT. Whisper is skipped entirely when no speech is detected.' },
+    desc: 'Captures 16 kHz mono Float32 audio via AudioWorklet. Batches worklet frames into 80 ms chunks before IPC to cut traffic ~10×. On wake-detected, a tiny RMS-based VAD runs: it ends capture on 600 ms of sustained silence after speech (typical ~1.5-2.5 s for a short command, 1.5 s if nothing spoken) and only then ships a WAV blob to whisper-cli for STT. Whisper is skipped entirely when no speech is detected.' },
   { id: 'audio-worklet', label: 'AudioWorklet',         cat: 'renderer', x:  60, y: 470,
     path: 'inline in wakeWord.js / ChatInterface.js',
     desc: 'Tiny PCM-capture AudioWorkletProcessor. Forwards raw Float32 frames from the mic to the main thread.' },
@@ -475,7 +488,7 @@ const NODES = [
   // ─── Preload bridge (x = 290) ──────────────────────────────────────────
   { id: 'preload',       label: 'preload.js (electronAPI)', cat: 'preload', x: 290, y: 280, w: 200,
     path: 'src/preload.js',
-    desc: 'contextBridge.exposeInMainWorld surface — the ONLY thing the renderer can call. Each entry maps to ipcRenderer.invoke (request/response) or ipcRenderer.send (fire-and-forget) plus listeners for push events.' },
+    desc: 'contextBridge.exposeInMainWorld surface - the ONLY thing the renderer can call. Each entry maps to ipcRenderer.invoke (request/response) or ipcRenderer.send (fire-and-forget) plus listeners for push events.' },
 
   // ─── Main app shell (x ≈ 560) ─────────────────────────────────────────
   { id: 'main-js',       label: 'main.js',              cat: 'shell', x: 560, y:  50,
@@ -502,9 +515,9 @@ const NODES = [
   { id: 'perm-mgr',      label: 'PermissionManager',    cat: 'agent', x: 380, y: 310,
     path: 'src/main/agents/PermissionManager.js',
     desc: 'Per-tool permission tiers. Read-only tools (search, fetch) run silently; write tools (calendar, launch_app) emit permission.request events that block until the renderer responds with approve/deny.' },
-  { id: 'compaction',    label: 'CompactionManager',    cat: 'agent', x: 380, y: 380,
-    path: 'src/main/agents/CompactionManager.js',
-    desc: 'When a session\'s message history approaches the model\'s context window, summarizes the oldest turns into a rolling summary so the recent turns stay verbatim.' },
+  { id: 'compaction',    label: 'Context compaction',   cat: 'agent', x: 380, y: 380,
+    path: 'src/main/agents/AgentRuntime.js#L478',
+    desc: 'Lives inside AgentRuntime as _maybeSummarize() / _buildSummaryPrompt(). Fires once a session passes ~20 turn-pairs; rolls older pairs into a running summary on the cheapest model from the active provider, keeps the most recent 10 pairs verbatim. Result injected as contextSummary on the next system-prompt build.' },
   { id: 'cost-tracker',  label: 'CostTracker',          cat: 'agent', x: 380, y: 450,
     path: 'src/main/agents/CostTracker.js',
     desc: 'Token-in / token-out counters with per-provider USD math. Shows up as the small cost figure attached to step-finish parts.' },
@@ -550,7 +563,7 @@ const NODES = [
     desc: 'OAuth installed-app flow + Calendar API client. Spins up a temporary localhost:3131 callback server during sign-in.' },
   { id: 'wake-svc',      label: 'WakeWordService',      cat: 'service', x: 290, y: 540,
     path: 'src/main/services/WakeWordService.js',
-    desc: 'OpenWakeWord ONNX pipeline. Three chained models — melspectrogram → embedding → phrase-specific (hey_jarvis / alexa / hey_mycroft / hey_rhasspy). Pre-warms buffers with 2.5 s of silence at load() so first-detection latency is ~80–150 ms instead of paying a ~2.5 s bootstrap. Dual-threshold trigger: strong (p > 0.55, fires instantly on a single chunk) plus sustained (p > 0.40 over 2 consecutive chunks) — single-frame noise spikes are filtered out. Cooldown 1500 ms.' },
+    desc: 'OpenWakeWord ONNX pipeline. Three chained models - melspectrogram → embedding → phrase-specific (hey_jarvis / alexa / hey_mycroft / hey_rhasspy). Pre-warms buffers with 2.5 s of silence at load() so first-detection latency is ~80-150 ms instead of paying a ~2.5 s bootstrap. Dual-threshold trigger: strong (p > 0.55, fires instantly on a single chunk) plus sustained (p > 0.40 over 2 consecutive chunks) - single-frame noise spikes are filtered out. Cooldown 1500 ms.' },
 
   // ─── Tools (bottom band) ──────────────────────────────────────────────
   { id: 'tool-registry', label: 'ToolRegistry',         cat: 'tool', x: 810, y: 650,
@@ -576,7 +589,7 @@ const NODES = [
     desc: 'Google Calendar CRUD. Writes are permission-gated; reads (get_calendar_summary) run silently. All blocked in incognito.' },
   { id: 'mcp',           label: 'MCPClient',            cat: 'tool', x: 810, y: 720,
     path: 'src/main/mcp/MCPClient.js',
-    desc: 'Spawns external MCP servers via stdio transport. Registered tools land in the same ToolRegistry — agent treats them identically to built-ins.' },
+    desc: 'Spawns external MCP servers via stdio transport. Registered tools land in the same ToolRegistry - agent treats them identically to built-ins.' },
 
   // ─── Storage ──────────────────────────────────────────────────────────
   { id: 'persistent-store', label: 'PersistentStore',   cat: 'storage', x: 580, y: 560, w: 180,
@@ -926,7 +939,7 @@ window.addEventListener('mouseup', (e) => {
   }
 });
 
-// Only re-route the edges connected to a moved node — saves a full pass.
+// Only re-route the edges connected to a moved node - saves a full pass.
 function rerouteEdgesFor(nodeId) {
   edgeEls.forEach((el) => {
     if (el.dataset.from !== nodeId && el.dataset.to !== nodeId) return;
@@ -1062,7 +1075,7 @@ svg.addEventListener('click', (e) => {
   if (!e.target.closest('.node')) closeSide();
 });
 
-// Wheel zoom — preserves the mouse-pointed location
+// Wheel zoom - preserves the mouse-pointed location
 svg.addEventListener('wheel', (e) => {
   e.preventDefault();
   const rect = svg.getBoundingClientRect();
@@ -1134,7 +1147,7 @@ function fitView() {
 }
 fitView();
 
-// Reset-layout button — restores default positions, clears localStorage.
+// Reset-layout button - restores default positions, clears localStorage.
 const resetBtn = document.getElementById('resetLayoutBtn');
 if (hadSavedLayout) resetBtn.disabled = false;
 resetBtn.addEventListener('click', () => {

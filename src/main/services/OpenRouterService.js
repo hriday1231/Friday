@@ -1,5 +1,5 @@
 /**
- * OpenRouterService — aggregates 200+ open-source and commercial models
+ * OpenRouterService - aggregates 200+ open-source and commercial models
  * via a single OpenAI-compatible API at openrouter.ai.
  *
  * Free tier available; many open-source models are $0.

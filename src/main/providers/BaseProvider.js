@@ -1,5 +1,5 @@
 /**
- * BaseProvider — shared config helpers and interface stubs for all LLM providers.
+ * BaseProvider - shared config helpers and interface stubs for all LLM providers.
  *
  * All providers extend this class. Shared logic lives here once; providers
  * override only what differs.
@@ -25,7 +25,7 @@ class BaseProvider {
 
   /**
    * Return a cheap/fast model name for background tasks (summarization,
-   * memory extraction). Defaults to null — callers fall back to the main model.
+   * memory extraction). Defaults to null - callers fall back to the main model.
    */
   getCheapModel() { return null; }
 

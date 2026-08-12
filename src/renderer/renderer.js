@@ -17,6 +17,17 @@ document.getElementById('reloadBtn').addEventListener('click', () => {
   location.reload();
 });
 
+// ── To-Do window ─────────────────────────────────────────────────────────────
+async function openTodoWindow() {
+  try { await window.electronAPI?.openTodo?.(); }
+  catch (error) { console.error('Failed to open To-Do window:', error); }
+}
+document.getElementById('todoOpenBtn')?.addEventListener('click', openTodoWindow);
+document.addEventListener('keydown', (e) => {
+  // e.code so it survives non-QWERTY layouts.
+  if (e.ctrlKey && e.shiftKey && e.code === 'KeyT') { e.preventDefault(); openTodoWindow(); }
+});
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 document.getElementById('settingsBtn')?.addEventListener('click', async () => {
   try {
@@ -32,6 +43,9 @@ document.getElementById('settingsBtn')?.addEventListener('click', async () => {
 // long-lived ipcRenderer instance.
 const _ipcUnsubs = [];
 function _registerIpc(unsub) { if (typeof unsub === 'function') _ipcUnsubs.push(unsub); }
+// Exposed so feature-module components (TodoPanel) can enrol their unsubscribers
+// in the same teardown. Explicit rather than implicit, so it's greppable.
+window._registerIpc = _registerIpc;
 
 // ── Ollama model updates ──────────────────────────────────────────────────────
 _registerIpc(window.electronAPI?.onOllamaModelsUpdated?.((models) => {
@@ -477,7 +491,7 @@ document.addEventListener('keydown', (e) => {
   const tag    = document.activeElement?.tagName;
   const inText = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
 
-  // Ctrl+Shift+F — sidebar search
+  // Ctrl+Shift+F - sidebar search
   if (e.shiftKey) {
     if (e.key.toLowerCase() === 'f') { e.preventDefault(); openChatsSearch(); }
     return;
@@ -512,7 +526,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Ctrl+K — Session Switcher ─────────────────────────────────────────────────
+// ── Ctrl+K - Session Switcher ─────────────────────────────────────────────────
 
 let _ssmSessions = [];
 let _ssmIndex   = -1;
@@ -605,7 +619,7 @@ ssmSearch?.addEventListener('keydown', (e) => {
 
 ssmModal?.querySelector('.ssm-backdrop')?.addEventListener('click', closeSessionSwitcher);
 
-// ── Ctrl+E — Export current chat ─────────────────────────────────────────────
+// ── Ctrl+E - Export current chat ─────────────────────────────────────────────
 
 async function exportCurrentChat() {
   if (!_viewedSessionId) return;
@@ -657,7 +671,7 @@ function renderSuggestions({ memories = [], episodes = [] } = {}) {
     html += '<div class="sugg-section"><div class="sugg-section-title">What I know</div>';
     for (const m of memories) {
       const cat = CAT_LABEL[m.category] || m.category || '';
-      // Both cat and content are escaped — m.category falls back to the raw
+      // Both cat and content are escaped - m.category falls back to the raw
       // category string from the DB, which originates with LLM extraction.
       html += `<div class="sugg-item"><span class="sugg-item-cat">${_esc(cat)}</span>${_esc(m.content)}</div>`;
     }
@@ -694,6 +708,12 @@ async function fetchAndRenderSuggestions(query) {
   } catch {}
 }
 
+function closeSuggPanel() {
+  _suggOpen = false;
+  document.getElementById('suggPanel')?.classList.add('hidden');
+  document.getElementById('suggToggleBtn')?.classList.remove('active');
+}
+
 document.getElementById('suggToggleBtn')?.addEventListener('click', () => {
   _suggOpen = !_suggOpen;
   document.getElementById('suggPanel')?.classList.toggle('hidden', !_suggOpen);
@@ -701,11 +721,7 @@ document.getElementById('suggToggleBtn')?.addEventListener('click', () => {
   if (_suggOpen && _suggLastQuery) fetchAndRenderSuggestions(_suggLastQuery);
 });
 
-document.getElementById('suggCloseBtn')?.addEventListener('click', () => {
-  _suggOpen = false;
-  document.getElementById('suggPanel')?.classList.add('hidden');
-  document.getElementById('suggToggleBtn')?.classList.remove('active');
-});
+document.getElementById('suggCloseBtn')?.addEventListener('click', () => closeSuggPanel());
 
 // Called by ChatInterface after each completed response
 window._onSuggestionQuery = (query) => {
@@ -726,14 +742,14 @@ function _setIncognito(on) {
   const input = document.getElementById('userInput');
   if (input) {
     input.placeholder = _incognito
-      ? 'Incognito — local only, nothing saved…'
+      ? 'Incognito - local only, nothing saved…'
       : 'Ask me anything... (Ctrl+Shift+Space to toggle)';
   }
 
   // Wipe the visible chat so nothing carries between modes.
   const msgs = document.getElementById('chatMessages');
   if (msgs) msgs.innerHTML = '<div class="welcome-message" id="welcomeMessage"><h2>Hi! I\'m Friday</h2><p id="welcomeSubtext">' +
-    (_incognito ? 'Incognito mode — nothing is saved.' : 'Your personal AI assistant. Ask me anything!') +
+    (_incognito ? 'Incognito mode - nothing is saved.' : 'Your personal AI assistant. Ask me anything!') +
     '</p></div>';
 
   if (window.chatInterface) {
@@ -766,8 +782,8 @@ function _renderPermBtn(on) {
   if (!_permBtn) return;
   _permBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
   _permBtn.title = on
-    ? 'All tool permissions are ON — click to require prompts'
-    : 'Tool permissions require prompts — click to auto-approve everything';
+    ? 'All tool permissions are ON - click to require prompts'
+    : 'Tool permissions require prompts - click to auto-approve everything';
   const iconOn  = _permBtn.querySelector('.perm-icon-on');
   const iconOff = _permBtn.querySelector('.perm-icon-off');
   if (iconOn)  iconOn.style.display  = on ? '' : 'none';
@@ -782,7 +798,7 @@ function _renderPermBtn(on) {
 _permBtn?.addEventListener('click', async () => {
   const isOn = _permBtn.getAttribute('aria-pressed') === 'true';
   const next = !isOn;
-  // Optimistic UI flip — feels instant; revert on failure.
+  // Optimistic UI flip - feels instant; revert on failure.
   _renderPermBtn(next);
   try {
     const res = await window.electronAPI?.saveAutoApproveTools?.(next);
@@ -819,10 +835,10 @@ async function _initWakeWord() {
       await window.electronAPI?.showWindow?.();
 
       if (commandText) {
-        // Command was spoken after the wake phrase — submit it directly
+        // Command was spoken after the wake phrase - submit it directly
         window.chatInterface?.submitText?.(commandText);
       } else {
-        // No command — activate the mic so the user can speak
+        // No command - activate the mic so the user can speak
         document.getElementById('micBtn')?.click();
       }
     },
@@ -983,7 +999,7 @@ _registerIpc(window.electronAPI?.onAgentEvent?.((event) => {
       const txt = document.getElementById('tokenWarningText');
       if (bar) bar.classList.remove('hidden');
       if (txt && event.tokensLeft) {
-        txt.textContent = `Context ${Math.round(event.pct * 100)}% full — ${event.tokensLeft.toLocaleString()} tokens remaining`;
+        txt.textContent = `Context ${Math.round(event.pct * 100)}% full - ${event.tokensLeft.toLocaleString()} tokens remaining`;
       }
       break;
     }

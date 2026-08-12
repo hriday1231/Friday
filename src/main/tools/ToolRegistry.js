@@ -44,7 +44,7 @@ class ToolRegistry {
   /**
    * Get all tools as Gemini FunctionDeclaration format.
    * Deduplicates: built-in tools take precedence over MCP tools with the same name.
-   * @param {Set<string>|null} [excludeTools] — names to omit (incognito tool gating).
+   * @param {Set<string>|null} [excludeTools] - names to omit (incognito tool gating).
    */
   getGeminiFunctionDeclarations(excludeTools = null) {
     const declarations = [];
@@ -178,7 +178,7 @@ class ToolRegistry {
 
   /**
    * Get tools in Ollama API format for tool calling.
-   * @param {Set<string>|null} [excludeTools] — names to omit (incognito tool gating).
+   * @param {Set<string>|null} [excludeTools] - names to omit (incognito tool gating).
    */
   getOllamaTools(excludeTools = null) {
     const tools = [];

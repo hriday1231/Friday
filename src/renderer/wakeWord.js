@@ -1,5 +1,5 @@
 /**
- * WakeWordDetector — always-on local wake-word powered by OpenWakeWord.
+ * WakeWordDetector - always-on local wake-word powered by OpenWakeWord.
  *
  * Renderer side: captures 16 kHz mono PCM via AudioWorklet and streams it to
  * the main process (electronAPI.wakeWordPushAudio). Main runs the ONNX
@@ -10,13 +10,13 @@
  *   1. Pause streaming (cooldown handled by main).
  *   2. Record a short command clip via the same audio path.
  *   3. Send the clip to whisper-cli for STT.
- *   4. Fire onWake(commandText) — empty string means "just heard the phrase".
+ *   4. Fire onWake(commandText) - empty string means "just heard the phrase".
  *
  * Public API kept compatible with the previous detector so renderer.js and
  * settings.js don't need code changes:
  *   new WakeWordDetector({ phrases, onWake, ... })
  *   .start() / .stop() / .pause() / .resume()
- *   .static _encodeWav(frames, sampleRate)  — used by settings test button
+ *   .static _encodeWav(frames, sampleRate)  - used by settings test button
  */
 
 const _WAKE_WORKLET_CODE = `
@@ -32,7 +32,7 @@ registerProcessor('wake-pcm-capture', PCMCaptureProcessor);
 
 // Command-capture parameters. We use VAD instead of a fixed window: as soon as
 // the user stops talking we end the capture, ship it to Whisper, and submit.
-const CMD_MAX_MS              = 6000;   // hard ceiling — safety net
+const CMD_MAX_MS              = 6000;   // hard ceiling - safety net
 const CMD_NO_SPEECH_TIMEOUT   = 1500;   // give up if nothing audible after wake
 const CMD_SILENCE_END_MS      = 600;    // sustained silence after speech → end
 const CMD_RMS_SPEECH_THRESH   = 0.014;  // RMS above this counts as "speech"
@@ -87,7 +87,7 @@ class WakeWordDetector {
       // Frames from the worklet arrive as 128-sample Float32Array chunks
       // (~8 ms each, one per render quantum). 125 IPC sends/sec is wasteful;
       // we accumulate 10 frames at a time so we ship one ~80 ms chunk per
-      // send — matching the wake-word service's processing granularity and
+      // send - matching the wake-word service's processing granularity and
       // cutting IPC traffic by ~10×.
       const BATCH_FRAMES = 10;       // 10 * 128 samples = 1280 samples = 80 ms @ 16 kHz
       let batchBuf = [];
@@ -126,7 +126,7 @@ class WakeWordDetector {
       this._running = true;
       console.log('[WakeWord] Listening for phrase:', this.phraseId);
     } catch (err) {
-      console.warn('[WakeWord] Could not start — mic unavailable:', err.message);
+      console.warn('[WakeWord] Could not start - mic unavailable:', err.message);
       this._cleanup();
     }
   }
@@ -160,7 +160,7 @@ class WakeWordDetector {
   async _onWakeDetected(_data) {
     if (!this._running) return;
     // Switch into post-wake command-capture mode. End is decided by a tiny
-    // VAD running on the rolling RMS of the captured frames — see _vadTick.
+    // VAD running on the rolling RMS of the captured frames - see _vadTick.
     this._capturingCmd = true;
     this._cmdFrames = [];
     this._running = false;
@@ -202,7 +202,7 @@ class WakeWordDetector {
       if (speakingNow) { state.hasSpoken = true; state.silenceStart = null; }
       else if (elapsed >= CMD_NO_SPEECH_TIMEOUT) { done = true; reason = 'no-speech'; }
     } else {
-      // Already heard speech — watching for end-of-utterance silence.
+      // Already heard speech - watching for end-of-utterance silence.
       if (speakingNow) {
         state.silenceStart = null;
       } else {
@@ -229,7 +229,7 @@ class WakeWordDetector {
     this._capturingCmd = false;
 
     let commandText = '';
-    // Skip STT entirely if we never heard speech — saves whisper-cli launch + ~300ms.
+    // Skip STT entirely if we never heard speech - saves whisper-cli launch + ~300ms.
     if (hadSpeech) {
       try {
         const wav = WakeWordDetector._encodeWav(frames, 16000);

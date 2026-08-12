@@ -44,7 +44,7 @@ class GeminiProvider extends BaseProvider {
   }
 
   appendToolResults(messages, results) {
-    // Gemini's API keys tool replies by name only — no callId is required on the wire.
+    // Gemini's API keys tool replies by name only - no callId is required on the wire.
     // Multi-tool turns must therefore preserve order; AgentRuntime returns results
     // in the same order tool calls were issued.
     messages.push({
@@ -80,7 +80,7 @@ class GeminiProvider extends BaseProvider {
       signal ? { signal } : undefined
     );
 
-    // Stream text chunks as they arrive — and respect aborts mid-stream, since
+    // Stream text chunks as they arrive - and respect aborts mid-stream, since
     // the SDK doesn't always cancel the underlying request when the signal flips.
     let fullText = '';
     for await (const chunk of stream.stream) {
@@ -104,7 +104,7 @@ class GeminiProvider extends BaseProvider {
     const toolCalls = rawParts
       .filter(p => p.functionCall)
       .map((p, i) => ({
-        // Gemini doesn't surface a stable id per call — synthesise one so AgentRuntime
+        // Gemini doesn't surface a stable id per call - synthesise one so AgentRuntime
         // can key approvals/parts uniquely even with multiple calls in one turn.
         id:   `gemini_${Date.now()}_${i}_${p.functionCall.name}`,
         name: p.functionCall.name,

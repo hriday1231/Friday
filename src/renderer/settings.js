@@ -103,10 +103,10 @@ async function refreshIntegrationsStatus() {
   }
 
   // Groq / Gemini / Brave / OpenRouter (Models page badges)
-  setBadge($('badge-groq'),          status.groq?.configured        ? 'ok' : 'warn', status.groq?.configured        ? '✓' : '—');
-  setBadge($('badge-gemini-models'), status.gemini?.configured       ? 'ok' : 'warn', status.gemini?.configured       ? '✓' : '—');
-  setBadge($('badge-brave-models'),  status.brave?.configured        ? 'ok' : 'warn', status.brave?.configured        ? '✓' : '—');
-  setBadge($('badge-openrouter'),    status.openrouter?.configured   ? 'ok' : 'warn', status.openrouter?.configured   ? '✓' : '—');
+  setBadge($('badge-groq'),          status.groq?.configured        ? 'ok' : 'warn', status.groq?.configured        ? '✓' : '-');
+  setBadge($('badge-gemini-models'), status.gemini?.configured       ? 'ok' : 'warn', status.gemini?.configured       ? '✓' : '-');
+  setBadge($('badge-brave-models'),  status.brave?.configured        ? 'ok' : 'warn', status.brave?.configured        ? '✓' : '-');
+  setBadge($('badge-openrouter'),    status.openrouter?.configured   ? 'ok' : 'warn', status.openrouter?.configured   ? '✓' : '-');
 
   // Google Calendar
   const creds = status.googleCalendar?.credentialsPresent;
@@ -220,7 +220,7 @@ function wireEvents() {
 
 function wireIntegrationsPage() {
   $('saveOllamaUrlBtn')?.addEventListener('click', async () => {
-    const url = ($('ollamaUrlInput')?.value || '').trim() || 'http://localhost:11434';
+    const url = ($('ollamaUrlInput')?.value || '').trim() || 'http://127.0.0.1:11434';
     const res = await window.electronAPI?.saveOllamaUrl?.(url);
     if (res?.success) showToast('Ollama URL saved', 'ok');
     else showToast('Failed to save Ollama URL', 'err');
@@ -232,7 +232,7 @@ function wireIntegrationsPage() {
     if (!hotkey) { showToast('Enter a hotkey first', 'warn'); return; }
     const res = await window.electronAPI?.saveHotkey?.(hotkey);
     if (res?.success) showToast(`Hotkey set to ${hotkey}`, 'ok');
-    else showToast(res?.error || 'Failed to set hotkey — check the accelerator syntax', 'err');
+    else showToast(res?.error || 'Failed to set hotkey - check the accelerator syntax', 'err');
   });
 
   $('saveWakeWordBtn')?.addEventListener('click', async () => {
@@ -279,7 +279,7 @@ async function loadModelsPage() {
     const badge = (id, key) => {
       const el = $(id);
       if (!el) return;
-      el.textContent = key ? '✓' : '—';
+      el.textContent = key ? '✓' : '-';
       el.className   = `settings-badge ${key ? 'ok' : ''}`;
     };
     set('groqApiKeyInput',        groq?.key);
@@ -353,7 +353,7 @@ function _populateModelDropdown(selectEl, type, selectedModel) {
 function _setBadge(id, key) {
   const el = $(id);
   if (!el) return;
-  el.textContent = key ? '✓' : '—';
+  el.textContent = key ? '✓' : '-';
   el.className   = `settings-badge ${key ? 'ok' : ''}`;
 }
 
@@ -379,7 +379,7 @@ function wireModelsPage() {
     await window.electronAPI?.saveGroqKey?.(key);
     const res = await window.electronAPI?.testIntegration?.('groq');
     if (res?.success) {
-      showToast(`Groq ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      showToast(`Groq ✓ - ${res.details?.modelCount ?? 0} models available`, 'ok');
       _setBadge('badge-groq', key);
     } else {
       showToast(`Groq failed: ${res?.error || 'unknown error'}`, 'err');
@@ -400,7 +400,7 @@ function wireModelsPage() {
     await window.electronAPI?.saveGeminiKey?.(key);
     const res = await window.electronAPI?.testIntegration?.('gemini');
     if (res?.success) {
-      showToast(`Gemini ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      showToast(`Gemini ✓ - ${res.details?.modelCount ?? 0} models available`, 'ok');
       _setBadge('badge-gemini-models', key);
     } else {
       showToast(`Gemini failed: ${res?.error || 'unknown error'}`, 'err');
@@ -421,7 +421,7 @@ function wireModelsPage() {
     await window.electronAPI?.saveBraveKey?.(key);
     const res = await window.electronAPI?.testIntegration?.('brave');
     if (res?.success) {
-      showToast(`Brave ✓ — ${res.details?.resultCount ?? 0} results`, 'ok');
+      showToast(`Brave ✓ - ${res.details?.resultCount ?? 0} results`, 'ok');
       _setBadge('badge-brave-models', key);
     } else {
       showToast(`Brave failed: ${res?.error || 'unknown error'}`, 'err');
@@ -444,7 +444,7 @@ function wireModelsPage() {
     await window.electronAPI?.saveOpenRouterKey?.(key);
     const res = await window.electronAPI?.testIntegration?.('openrouter');
     if (res?.success) {
-      showToast(`OpenRouter ✓ — ${res.details?.modelCount ?? 0} models available`, 'ok');
+      showToast(`OpenRouter ✓ - ${res.details?.modelCount ?? 0} models available`, 'ok');
       _setBadge('badge-openrouter', key);
     } else {
       showToast(`OpenRouter failed: ${res?.error || 'unknown error'}`, 'err');
@@ -745,7 +745,7 @@ function wireVoiceEvents() {
         const isInitFail = /failed to initialize whisper context|cuda|gpu/i.test(err);
         showToast(
           isInitFail
-            ? 'Whisper failed to start — try checking "Force CPU mode"'
+            ? 'Whisper failed to start - try checking "Force CPU mode"'
             : `Whisper error: ${err.slice(0, 140)}`,
           'err'
         );
@@ -795,7 +795,7 @@ function wireVoiceEvents() {
   $('wakeTestBtn')?.addEventListener('click', () => runWakePhraseTest());
 }
 
-// Live RMS meter — opens the mic for 5s, shows peak vs the WakeWordDetector
+// Live RMS meter - opens the mic for 5s, shows peak vs the WakeWordDetector
 // threshold (0.012 by default). Lets users see whether their mic is being
 // picked up at all and whether their normal speaking volume crosses the
 // trigger threshold.
@@ -875,10 +875,10 @@ async function runMicLevelTest() {
 
   const avg = samples > 0 ? sum / samples : 0;
   const verdict = peak < 0.0005
-    ? 'No signal — is the right mic selected in Windows Sound settings?'
+    ? 'No signal - is the right mic selected in Windows Sound settings?'
     : peak < _MIC_TEST_THRESHOLD
       ? 'Mic works but you were quieter than the wake-word threshold. Speak louder or move closer.'
-      : 'Mic works and crossed the wake-word threshold — wake word should trigger.';
+      : 'Mic works and crossed the wake-word threshold - wake word should trigger.';
   result.innerHTML = `Peak: <strong>${peak.toFixed(4)}</strong> · Avg: <strong>${avg.toFixed(4)}</strong> · Threshold: <strong>${_MIC_TEST_THRESHOLD}</strong><br>${verdict}`;
   btn.disabled = false;
   _micTestRunning = false;
@@ -978,7 +978,7 @@ async function runWakePhraseTest() {
     return;
   }
 
-  // Visual countdown — show "Listening… 4s" → 3s → 2s → 1s → done
+  // Visual countdown - show "Listening… 4s" → 3s → 2s → 1s → done
   const DURATION_MS = 4000;
   const startedAt = performance.now();
   const tickStatus = () => {
@@ -1002,7 +1002,7 @@ async function runWakePhraseTest() {
 
   const displayPhrase = ($('wakeWordPhrase')?.selectedOptions?.[0]?.textContent) || phrase;
   result.innerHTML = detected
-    ? `<span style="color:#6c6">✓ Detected <strong>"${displayPhrase}"</strong> (p=${detectedProb.toFixed(3)}).</span> Production wake will activate after the phrase — speak your command after, and it gets transcribed via Whisper.`
+    ? `<span style="color:#6c6">✓ Detected <strong>"${displayPhrase}"</strong> (p=${detectedProb.toFixed(3)}).</span> Production wake will activate after the phrase - speak your command after, and it gets transcribed via Whisper.`
     : `<span style="color:#e88">✗ No detection.</span> Try again: clear speech, the phrase by itself, close to the mic. If you've never used wake-word before, the first run downloads ~3.5 MB of models from GitHub.`;
 
   status.textContent = 'Tap to test wake phrase.';
@@ -1091,7 +1091,7 @@ function wireTrainingEvents() {
     }).join('\n\n');
 
     preview.style.display = 'block';
-    preview.textContent   = `// ${_formatLabel(format)} — showing ${Math.min(3, filtered.length)} of ${filtered.length} examples\n\n${sample}`;
+    preview.textContent   = `// ${_formatLabel(format)} - showing ${Math.min(3, filtered.length)} of ${filtered.length} examples\n\n${sample}`;
   });
 
   $('trainingExportBtn')?.addEventListener('click', async () => {

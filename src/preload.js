@@ -57,6 +57,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   approveMemories: (facts) => ipcRenderer.invoke('approve-memories', facts),
 
+  // ── To-Do window (feature module - src/main/features/todo) ───────────────
+  openTodo:            ()          => ipcRenderer.invoke('open-todo'),
+  todoBoard:           (filters)   => ipcRenderer.invoke('todo-board',  { filters }),
+  createTodo:          (todo)      => ipcRenderer.invoke('todo-create', { todo }),
+  updateTodo:          (id, patch) => ipcRenderer.invoke('todo-update', { id, patch }),
+  moveTodo:            (id, statusId, index) => ipcRenderer.invoke('todo-move', { id, statusId, index }),
+  deleteTodo:          (id)        => ipcRenderer.invoke('todo-delete', { id }),
+  clearCompletedTodos: ()          => ipcRenderer.invoke('todo-clear-completed'),
+  todoPomoDone:        (id)        => ipcRenderer.invoke('todo-pomo-done', { id }),
+
+  createTodoStatus:    (data)      => ipcRenderer.invoke('todo-status-create', data),
+  updateTodoStatus:    (id, patch) => ipcRenderer.invoke('todo-status-update', { id, patch }),
+  deleteTodoStatus:    (id, reassignTo) => ipcRenderer.invoke('todo-status-delete', { id, reassignTo }),
+  reorderTodoStatuses: (ids)       => ipcRenderer.invoke('todo-status-reorder', { ids }),
+
+  createTodoCategory:  (data)      => ipcRenderer.invoke('todo-category-create', data),
+  updateTodoCategory:  (id, patch) => ipcRenderer.invoke('todo-category-update', { id, patch }),
+  deleteTodoCategory:  (id)        => ipcRenderer.invoke('todo-category-delete', { id }),
+
+  getTodoConfig:       ()          => ipcRenderer.invoke('todo-get-config'),
+  saveTodoConfig:      (cfg)       => ipcRenderer.invoke('todo-save-config', cfg),
+
+  onTodoChanged: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('todo-changed', handler);
+    return () => ipcRenderer.removeListener('todo-changed', handler);
+  },
+
   saveDocument:  ({ sessionId, doc })  => ipcRenderer.invoke('save-document',  { sessionId, doc }),
   getDocuments:  ({ sessionId })        => ipcRenderer.invoke('get-documents',  { sessionId }),
   deleteDocument:({ id })               => ipcRenderer.invoke('delete-document', { id }),

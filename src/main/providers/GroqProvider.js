@@ -4,7 +4,7 @@ const { buildSystemPrompt } = require('../config/systemPrompt');
 const BaseProvider = require('./BaseProvider');
 
 /**
- * Groq LLM provider — OpenAI-compatible streaming API.
+ * Groq LLM provider - OpenAI-compatible streaming API.
  */
 class GroqProvider extends BaseProvider {
   constructor(toolRegistry) {
@@ -20,7 +20,7 @@ class GroqProvider extends BaseProvider {
   }
 
   appendUser(messages, text, images = []) {
-    // Groq's LLaMA models don't support vision yet — attach text only.
+    // Groq's LLaMA models don't support vision yet - attach text only.
     messages.push({ role: 'user', content: text });
   }
 

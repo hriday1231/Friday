@@ -6,7 +6,7 @@ const TIMEZONE = process.env.CALENDAR_TIMEZONE || 'America/Los_Angeles';
 
 const declaration = {
   name: 'edit_calendar_event',
-  description: 'Edit an existing calendar event. Use when the user wants to change an event (e.g. "move my meeting to 3pm", "change the dentist appointment title"). You need the event id—use get_calendar_summary first to find it if the user refers to an event by name or time.',
+  description: 'Edit an existing calendar event. Use when the user wants to change an event (e.g. "move my meeting to 3pm", "change the dentist appointment title"). You need the event id-use get_calendar_summary first to find it if the user refers to an event by name or time.',
   parameters: {
     type: 'object',
     properties: {

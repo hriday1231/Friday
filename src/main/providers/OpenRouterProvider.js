@@ -4,7 +4,7 @@ const { buildSystemPrompt } = require('../config/systemPrompt');
 const BaseProvider = require('./BaseProvider');
 
 /**
- * OpenRouter LLM provider — OpenAI-compatible streaming API.
+ * OpenRouter LLM provider - OpenAI-compatible streaming API.
  */
 class OpenRouterProvider extends BaseProvider {
   constructor(toolRegistry) {

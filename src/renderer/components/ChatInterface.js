@@ -1,4 +1,4 @@
-// AudioWorklet processor — captured as a Blob URL so no separate file is needed
+// AudioWorklet processor - captured as a Blob URL so no separate file is needed
 const _WHISPER_WORKLET_CODE = `
 class PCMCaptureProcessor extends AudioWorkletProcessor {
   process(inputs) {
@@ -174,7 +174,7 @@ class ChatInterface {
     // Load TTS config (async)
     window.electronAPI?.getTtsConfig?.().then(cfg => { if (cfg) this._ttsConfig = cfg; }).catch(() => {});
 
-    // Load persisted session on startup (async — don't block constructor)
+    // Load persisted session on startup (async - don't block constructor)
     this._loadActiveSession();
   }
 
@@ -224,7 +224,7 @@ class ChatInterface {
       this.userInput.style.height = Math.min(this.userInput.scrollHeight, 150) + 'px';
     });
 
-    // Stop button — cancel the active AgentRuntime turn
+    // Stop button - cancel the active AgentRuntime turn
     this.stopBtn?.addEventListener('click', () => {
       const sid = this._currentSessionId;
       if (sid) {
@@ -232,12 +232,12 @@ class ChatInterface {
       }
     });
 
-    // Mic button — voice input
+    // Mic button - voice input
     this.micBtn?.addEventListener('click', () => this._toggleVoice());
 
     // Keyboard shortcuts for voice input:
-    //   Ctrl+Shift+M — toggle recording (start if idle, stop if listening)
-    //   Esc         — stop recording (only while listening)
+    //   Ctrl+Shift+M - toggle recording (start if idle, stop if listening)
+    //   Esc         - stop recording (only while listening)
     document.addEventListener('keydown', (e) => {
       // Mic toggle. Use e.code so it works regardless of keyboard layout +
       // doesn't care about caps lock. Match Ctrl+Shift+M precisely so we
@@ -282,7 +282,7 @@ class ChatInterface {
       }
     });
 
-    // Drag-and-drop — covers the whole chat area (messages + input).
+    // Drag-and-drop - covers the whole chat area (messages + input).
     // Uses a counter to avoid flickering when the pointer crosses child elements.
     const chatArea = document.querySelector('.chat-area') || this.messagesContainer;
     let _dragCount = 0;
@@ -331,7 +331,7 @@ class ChatInterface {
     const isPdf = file.type === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
 
     if (isPdf) {
-      // Parse in the renderer — pdfjs-dist needs browser APIs (ImageData, Path2D, canvas)
+      // Parse in the renderer - pdfjs-dist needs browser APIs (ImageData, Path2D, canvas)
       // that only exist here, not in the Node.js main process.
       if (!window._pdfjsLib) {
         // Build absolute file:// URLs from the document location so the path
@@ -355,7 +355,7 @@ class ChatInterface {
       }
       this._addDoc({ name, text: text.trim(), type: 'pdf', pages: pdf.numPages });
     } else {
-      // Plain text, code, CSV, markdown, etc. — read directly
+      // Plain text, code, CSV, markdown, etc. - read directly
       const text = await file.text();
       this._addDoc({ name, text, type: 'text' });
     }
@@ -548,7 +548,7 @@ class ChatInterface {
       } else if (status === 'failed') {
         emb.className += ' failed';
         emb.textContent = 'BM25';
-        emb.title = 'nomic-embed-text unavailable — using keyword search';
+        emb.title = 'nomic-embed-text unavailable - using keyword search';
       }
 
       const removeBtn = document.createElement('button');
@@ -572,7 +572,7 @@ class ChatInterface {
       const pre = block.parentElement;
 
       // ── Execution output block ──────────────────────────────────────────
-      // Model wraps stdout/stderr in ```output ... ``` — render as styled panel
+      // Model wraps stdout/stderr in ```output ... ``` - render as styled panel
       const lang = (block.className.match(/language-(\S+)/) || [])[1] || '';
       if (lang === 'output') {
         const raw   = block.innerText || block.textContent || '';
@@ -672,7 +672,7 @@ class ChatInterface {
 
     const header = document.createElement('div');
     header.className = 'exec-output-header';
-    // Build via DOM nodes — exitCode/duration come from regex over tool
+    // Build via DOM nodes - exitCode/duration come from regex over tool
     // output, which is attacker-controllable through prompt injection.
     const outLabel = document.createElement('span');
     outLabel.textContent = '⚡ Output';
@@ -732,7 +732,7 @@ class ChatInterface {
     let s = text;
 
     // Heuristic: content between $...$ is math iff it contains a math-like
-    // signal — subscript/superscript, LaTeX command, Greek/math Unicode, or
+    // signal - subscript/superscript, LaTeX command, Greek/math Unicode, or
     // a math operator. This rejects currency amounts ($1.7 billion ... $10),
     // which were previously matched as a single math block and rendered as
     // an unbroken italic stream by KaTeX.
@@ -775,7 +775,7 @@ class ChatInterface {
     }
     // Sanitize the rendered markup before it flows into innerHTML. marked
     // returns embedded HTML verbatim and `[label](javascript:…)` is allowed
-    // by default — DOMPurify strips both. KaTeX needs SVG and MathML, so we
+    // by default - DOMPurify strips both. KaTeX needs SVG and MathML, so we
     // explicitly enable those profiles and keep math attributes.
     if (typeof DOMPurify !== 'undefined') {
       html = DOMPurify.sanitize(html, {
@@ -788,7 +788,7 @@ class ChatInterface {
     return html;
   }
 
-  /** HTML-escape helper — used wherever we need to splice user/LLM text into
+  /** HTML-escape helper - used wherever we need to splice user/LLM text into
    * an HTML template without losing the surrounding markup structure. */
   _escapeHtml(s) {
     return String(s ?? '')
@@ -836,7 +836,7 @@ class ChatInterface {
     let whisperCfg = null;
     try {
       whisperCfg = await window.electronAPI?.getWhisperConfig?.();
-    } catch { /* ignore — fall back to Web Speech */ }
+    } catch { /* ignore - fall back to Web Speech */ }
 
     const useWhisper = whisperCfg?.exePath && whisperCfg?.modelPath;
     if (useWhisper) {
@@ -867,7 +867,7 @@ class ChatInterface {
       return;
     }
 
-    // Create AudioContext at 16 kHz — whisper's native sample rate, no resampling needed
+    // Create AudioContext at 16 kHz - whisper's native sample rate, no resampling needed
     let ctx;
     try {
       ctx = new AudioContext({ sampleRate: 16000 });
@@ -913,7 +913,7 @@ class ChatInterface {
 
     // Kick off auto-stop VAD: it polls the rolling RMS of `chunks`, and ends
     // the recording when the user stops talking. Without this the user has to
-    // manually click again — annoying, especially in the wake-word fallback.
+    // manually click again - annoying, especially in the wake-word fallback.
     this._whisperVadState = {
       startedAt:    Date.now(),
       hasSpoken:    false,
@@ -1020,10 +1020,18 @@ class ChatInterface {
       const result = await window.electronAPI?.transcribeAudio?.(new Uint8Array(wav), 'audio/wav');
 
       if (result?.success && result.transcript) {
+        // Saying "send it" at the end submits; anything else just fills the box.
+        const { text, send } = ChatInterface.parseSendSuffix(result.transcript);
         const base = this.userInput.value;
-        this.userInput.value = base + (base ? ' ' : '') + result.transcript;
+        const full = base + (base && text ? ' ' : '') + text;
+        this.userInput.value = full;
         this.userInput.style.height = 'auto';
         this.userInput.style.height = Math.min(this.userInput.scrollHeight, 150) + 'px';
+        // A bare "send it" with nothing to send would fire an empty message.
+        if (send && full.trim()) {
+          this._resetMicState();
+          this.sendMessage();
+        }
       } else if (result?.error) {
         this._showVoiceError(`Whisper: ${result.error}`);
       }
@@ -1035,6 +1043,35 @@ class ChatInterface {
       this._resetMicState();
       this.userInput.focus();
     }
+  }
+
+  /**
+   * Detect a spoken "send it" sign-off at the end of a transcript.
+   *
+   * Dictating hands-free, you need a way to say "that's the whole message, go" -
+   * otherwise every utterance needs a trip to the keyboard. Anything ending in a
+   * variation of "send it" submits; everything else just lands in the box.
+   *
+   * Whisper punctuates and capitalises freely ("Send it.", "send it!"), and
+   * people trail off differently ("send that", "ok send it now"), so the match is
+   * deliberately loose about the wrapping and strict about the shape: it must be
+   * the LAST thing said, and "send" must be the verb.
+   *
+   * @returns {{ text: string, send: boolean }} text has the sign-off removed
+   */
+  static parseSendSuffix(transcript) {
+    const raw = String(transcript ?? '');
+    // Trailing sign-off: optional lead-in ("ok", "and", "then"), "send",
+    // optional object ("it"/"that"/"this"/"this one"), optional tail
+    // ("now", "please"), then any punctuation.
+    const re = /[\s,.!?-]*\b(?:ok(?:ay)?|alright|and|then|now)?\s*\bsend\s*(?:it|that|this(?:\s+one)?)?\s*(?:now|please|it)?\s*[\s,.!?]*$/i;
+    const m = raw.match(re);
+    if (!m || !m[0].trim()) return { text: raw.trim(), send: false };
+
+    const text = raw.slice(0, m.index).replace(/[\s,]+$/, '').trim();
+    // "send it" on its own is a valid command when the box already has text, so
+    // an empty remainder still counts as send - the caller decides what to do.
+    return { text, send: true };
   }
 
   /** Build a minimal PCM WAV ArrayBuffer from Int16 samples. */
@@ -1108,7 +1145,7 @@ class ChatInterface {
   _stopVoice() {
     this._isListening = false;
     if (this._whisperChunks !== null) {
-      // Whisper AudioWorklet path — async, errors caught inside
+      // Whisper AudioWorklet path - async, errors caught inside
       this._stopWhisperRecording().catch(err => {
         console.error('[Voice] Stop error:', err);
         this._showVoiceError(`Stop failed: ${err.message}`);
@@ -1130,7 +1167,7 @@ class ChatInterface {
     this._whisperVadState = null;
     this.micBtn?.classList.remove('recording', 'transcribing');
     this.micBtn?.setAttribute('title', 'Voice input (click or Ctrl+Shift+M to start / stop)');
-    // Whisper / Web-Speech released the mic — let wake word resume listening.
+    // Whisper / Web-Speech released the mic - let wake word resume listening.
     try { window._wakeDetector?.resume?.(); } catch {}
   }
 
@@ -1165,7 +1202,7 @@ class ChatInterface {
    *   [Attached file: name]\n<text>\n\n---\n\n[Attached file: name2]\n<text>\n\n<user text>
    *
    * Strategy: if the message starts with "[Attached file:", split on "\n\n" and
-   * take the last chunk — that is always the user's original message.
+   * take the last chunk - that is always the user's original message.
    */
   _stripDocContext(content) {
     if (!content) return content;
@@ -1206,7 +1243,7 @@ class ChatInterface {
     }
   }
 
-  /** Called when the incognito toggle flips — drop transient state. */
+  /** Called when the incognito toggle flips - drop transient state. */
   _incognitoHistoryCleared() {
     this._clearAttachments();
     this._sessionDocs = [];
@@ -1231,7 +1268,7 @@ class ChatInterface {
     this._liveMsgEl = null;
   }
 
-  /** Start a brand-new session — keeps history accessible, clears the view. */
+  /** Start a brand-new session - keeps history accessible, clears the view. */
   async newChat() {
     this._cancelInFlight();
     this._clearAttachments();
@@ -1308,12 +1345,16 @@ class ChatInterface {
   /** Programmatically submit text (e.g. from wake word activation). */
   submitText(text) {
     if (!text) return;
-    this.userInput.value = text;
+    // The wake-word path submits regardless, but a spoken "send it" sign-off
+    // would otherwise be sent to the model as part of the request.
+    const { text: cleaned } = ChatInterface.parseSendSuffix(text);
+    if (!cleaned) return;
+    this.userInput.value = cleaned;
     this.sendMessage();
   }
 
   async sendMessage() {
-    // Single-flight guard — double-press / wake-word-during-stream would
+    // Single-flight guard - double-press / wake-word-during-stream would
     // otherwise overlap two turns and the first turn's idle event would
     // remove the second's thinking indicator.
     if (this.sendBtn?.disabled) return;
@@ -1324,7 +1365,7 @@ class ChatInterface {
 
     const { model, modelType } = window.modelSelector.getSelectedModel();
 
-    // Block sending images to a non-vision model — Ollama silently drops the
+    // Block sending images to a non-vision model - Ollama silently drops the
     // images array, which produces "irrelevant" answers that ignore the image.
     if (this._attachedImages.length > 0 && !window.modelSelector?.isCurrentModelVision?.()) {
       this._showVoiceError('Attached images need a vision model (👁). Configure one in Settings → Model Slots → Vision, then re-attach.');
@@ -1354,7 +1395,7 @@ class ChatInterface {
         if (useRag) {
           const retrieved = await docIdx.query(docId, rawMessage, 6);
           const mode = docIdx.embStatus(docId) === 'done' ? 'semantic+BM25' : 'BM25';
-          return `[Relevant excerpts from: ${d.name} — ${retrieved.length}/${chunks} chunks, ${mode}]\n${retrieved.join('\n\n---\n\n')}`;
+          return `[Relevant excerpts from: ${d.name} - ${retrieved.length}/${chunks} chunks, ${mode}]\n${retrieved.join('\n\n---\n\n')}`;
         }
         return `[Attached file: ${d.name}]\n${d.text}`;
       }))).join('\n\n');
@@ -1411,7 +1452,7 @@ class ChatInterface {
       if (result?.sessionId) this._currentSessionId = result.sessionId;
 
       // If the AgentRuntime returned an error and no events fired,
-      // the thinking indicator is still visible — clean it up.
+      // the thinking indicator is still visible - clean it up.
       if (!result?.success) {
         if (this._activeThinkingId) {
           this.removeThinkingIndicator(this._activeThinkingId);
@@ -1827,7 +1868,7 @@ class ChatInterface {
   // ── Usage / token display ─────────────────────────────────────────────────
 
   static _GEMINI_COST(model, inputTok, outputTok) {
-    // Prices per 1M tokens (USD). Rough estimates — update as needed.
+    // Prices per 1M tokens (USD). Rough estimates - update as needed.
     const table = {
       'gemini-2.5-pro':        [1.25, 10.0],
       'gemini-2.0-flash':      [0.10,  0.40],
@@ -1920,7 +1961,7 @@ class ChatInterface {
     span.textContent = chunk.text;
     streamBox.appendChild(span);
 
-    // Keep box bounded — retain last ~80 spans
+    // Keep box bounded - retain last ~80 spans
     while (streamBox.children.length > 80) streamBox.removeChild(streamBox.firstChild);
     // Auto-scroll stream box itself
     streamBox.scrollTop = streamBox.scrollHeight;
@@ -2005,7 +2046,7 @@ class ChatInterface {
 
     const thumbUp = document.createElement('button');
     thumbUp.className = 'msg-action-btn msg-thumb';
-    thumbUp.title = 'Good response — save as example';
+    thumbUp.title = 'Good response - save as example';
     thumbUp.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>`;
 
     const thumbDown = document.createElement('button');
@@ -2132,7 +2173,7 @@ class ChatInterface {
     this.sendMessage();
   }
 
-  // Legacy alias — kept so any old call to clearChat() still works
+  // Legacy alias - kept so any old call to clearChat() still works
   clearChat() { this.newChat(); }
 
   scrollToBottom() {
@@ -2182,7 +2223,7 @@ class ChatInterface {
     }
   }
 
-  /** Handle part.delta event — streaming text chunk or tool stream chunk. */
+  /** Handle part.delta event - streaming text chunk or tool stream chunk. */
   handlePartDelta(partId, delta) {
     const el = this._partEls?.get(partId);
     if (!el) return;
@@ -2214,7 +2255,7 @@ class ChatInterface {
   }
 
   /**
-   * Handle part.update event — receives the FULL updated part object.
+   * Handle part.update event - receives the FULL updated part object.
    * (AgentRuntime emits { type:'part.update', part: fullPartObject })
    */
   handlePartUpdate(partId, updatedPart) {
@@ -2265,7 +2306,7 @@ class ChatInterface {
       }
     }
 
-    // ── Text part finalized — replace streaming span with rendered markdown ──
+    // ── Text part finalized - replace streaming span with rendered markdown ──
     if (updatedPart.type === 'text' && updatedPart.content !== undefined && el.classList.contains('agent-text-part')) {
       el.innerHTML = '';
       const textDiv = document.createElement('div');
@@ -2314,7 +2355,7 @@ class ChatInterface {
     // Text parts arrive with content:'' and are filled via part.delta streaming.
     // Only render as markdown when content is already fully populated (history replay).
     if (!part.content || part.time?.end === null) {
-      // Streaming — will be filled via part.delta
+      // Streaming - will be filled via part.delta
       const span = document.createElement('span');
       span.className = 'agent-text-streaming';
       span.textContent = part.content || '';
@@ -2471,7 +2512,7 @@ class ChatInterface {
    * Show the AgentRuntime permission request banner.
    * Called by renderer.js on permission.request events.
    *
-   * Build via createElement + textContent (never innerHTML interpolation) —
+   * Build via createElement + textContent (never innerHTML interpolation) -
    * tool names and arg values are LLM-controlled and could otherwise smuggle
    * <script>/<img onerror=…> into the page.
    */
@@ -2484,7 +2525,7 @@ class ChatInterface {
       ? Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n').slice(0, 300)
       : '';
 
-    // Dedupe — a re-emitted permission.request shouldn't stack banners.
+    // Dedupe - a re-emitted permission.request shouldn't stack banners.
     if (container.querySelector(`.permission-banner[data-req-id="${CSS.escape(String(requestId))}"]`)) {
       return;
     }
@@ -2549,7 +2590,7 @@ class ChatInterface {
   }
 
   /**
-   * Permission gate — handled by AgentRuntime's permission.request events.
+   * Permission gate - handled by AgentRuntime's permission.request events.
    * showAgentPermissionBanner() is called from the onAgentEvent listener in renderer.js.
    */
   _setupToolConfirmation() {
@@ -2598,7 +2639,7 @@ class ChatInterface {
     const label = { low: 'L', medium: 'M', high: 'H' }[this._reasoningEffort] || 'M';
     const fullName = this._reasoningEffort.charAt(0).toUpperCase() + this._reasoningEffort.slice(1);
     this.effortToggleBtn.dataset.effort = this._reasoningEffort;
-    this.effortToggleBtn.title = `Reasoning effort: ${fullName} — click to cycle (low / medium / high)`;
+    this.effortToggleBtn.title = `Reasoning effort: ${fullName} - click to cycle (low / medium / high)`;
     const labelEl = this.effortToggleBtn.querySelector('.effort-label');
     if (labelEl) labelEl.textContent = label;
   }

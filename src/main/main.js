@@ -5,6 +5,16 @@ const os = require('os');
 const { execFile } = require('child_process');
 require('dotenv').config();
 
+// Electron 28 ships Node 18, where autoSelectFamily defaults to false - there is
+// no Happy Eyeballs fallback. On Windows `localhost` resolves to ::1 before
+// 127.0.0.1, and local model servers (Ollama, LM Studio) bind IPv4 only, so every
+// request dies with "connect ECONNREFUSED ::1:11434" even though the server is up.
+// Turning this on makes Node try both families instead of only the first.
+try {
+  const net = require('net');
+  if (typeof net.setDefaultAutoSelectFamily === 'function') net.setDefaultAutoSelectFamily(true);
+} catch { /* older Node - the 127.0.0.1 defaults below still cover the common case */ }
+
 const { setupTray } = require('./tray');
 const ToolRegistry = require('./tools/ToolRegistry');
 const { declaration: braveSearchDecl,       handler: braveSearchHandler }       = require('./tools/builtin/braveSearch');
@@ -17,6 +27,8 @@ const { declaration: addEventDecl,          handler: addEventHandler }          
 const { declaration: editEventDecl,         handler: editEventHandler }         = require('./tools/builtin/editEvent');
 const { declaration: deleteEventDecl,       handler: deleteEventHandler }       = require('./tools/builtin/deleteEvent');
 const { declaration: getCalendarSummaryDecl,handler: getCalendarSummaryHandler }= require('./tools/builtin/getCalendarSummary');
+
+const todoFeature        = require('./features/todo');
 
 const MCPClientManager   = require('./mcp/MCPClient');
 const AgentRuntime       = require('./agents/AgentRuntime');
@@ -38,8 +50,13 @@ const GoogleCalendarService = require('./services/GoogleCalendarService');
 const PersistentStore    = require('./store/PersistentStore');
 const WakeWordService    = require('./services/WakeWordService');
 
+// Global accelerator used when the user hasn't chosen one, and the fallback the
+// save-hotkey handler restores to. Defined once so startup and the handler agree.
+const DEFAULT_HOTKEY = 'CommandOrControl+Shift+Space';
+
 let mainWindow = null;
 let settingsWindow = null;
+let todoWindow = null;
 let agentRuntime      = null;
 let providerManager   = null;
 let mcpClientManager  = null;
@@ -144,6 +161,32 @@ function createSettingsWindow() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
+// The To-Do app is its own window, like Settings - a normal framed, taskbar-visible
+// window rather than the frameless always-on-top chat overlay, because it's
+// something you sit in and work through rather than summon for a moment.
+function createTodoWindow() {
+  if (todoWindow && !todoWindow.isDestroyed()) { todoWindow.show(); todoWindow.focus(); return; }
+  todoWindow = new BrowserWindow({
+    width: 1100, height: 760, minWidth: 720, minHeight: 480,
+    show: true, frame: true, resizable: true, skipTaskbar: false, alwaysOnTop: false,
+    title: 'Friday - To-Do',
+    backgroundColor: '#1a1a1a',
+    icon: fs.existsSync(_iconPath()) ? _iconPath() : undefined,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      preload: path.join(__dirname, '../preload.js'),
+    },
+  });
+  _hardenWebContents(todoWindow.webContents);
+  todoWindow.loadFile(path.join(__dirname, '../renderer/todo.html'));
+  todoWindow.on('closed', () => { todoWindow = null; });
+}
+
 function toggleWindow() {
   // Defensive: window may have been destroyed (rare but possible if a future
   // change ever drops `event.preventDefault()` from window-all-closed).
@@ -199,6 +242,30 @@ app.whenReady().then(async () => {
   const _chatSessions = store.listSessions('chat');
   activeSessionId = _chatSessions[0]?.id ?? store.createSession(null, 'chat').id;
 
+  // ── To-do feature ───────────────────────────────────────────────────────────
+  // Five-function adapter over PersistentStore. exec() maps to the RAW sql.js
+  // run() because store._run is prepare()-based and sql.js prepare() compiles
+  // only the first statement - multi-statement DDL sent through it would be
+  // silently truncated. _db.run also never schedules a save, which is why the
+  // module flushes explicitly after applying its schema.
+  todoFeature.init({
+    ipcMain,
+    db: {
+      exec:  (sql)         => store._db.run(sql),
+      all:   (sql, params) => store._all(sql, params),
+      get:   (sql, params) => store._get(sql, params),
+      run:   (sql, params) => store._run(sql, params),
+      flush: ()            => store._flushNow(),
+    },
+    // Broadcast rather than mainWindow-only: the settings window mutates to-dos
+    // too, and the agent-event emitter below targets mainWindow exclusively.
+    emit: (channel, payload) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send(channel, payload);
+      }
+    },
+  });
+
   // ── Tools + MCP ─────────────────────────────────────────────────────────────
   toolRegistry = new ToolRegistry();
   registerBuiltinTools(toolRegistry);
@@ -232,9 +299,9 @@ app.whenReady().then(async () => {
   });
 
   // ── Hotkey ──────────────────────────────────────────────────────────────────
-  const hotkey = SettingsStore.getHotkey() || process.env.HOTKEY || 'CommandOrControl+Shift+Space';
+  const hotkey = SettingsStore.getHotkey() || process.env.HOTKEY || DEFAULT_HOTKEY;
   if (!globalShortcut.register(hotkey, () => toggleWindow())) {
-    console.error('Hotkey registration failed');
+    console.error(`[main] hotkey registration failed for "${hotkey}" - another app likely owns it`);
   }
 
   // ── Warm up Ollama models list ──────────────────────────────────────────────
@@ -395,7 +462,7 @@ ipcMain.handle('approve-memories', (event, facts) => {
 
 ipcMain.handle('add-memory', (event, { content, category } = {}) => {
   if (!store || !content?.trim()) return { success: false };
-  // Cap memory content — too long is suspicious (likely prompt-injection
+  // Cap memory content - too long is suspicious (likely prompt-injection
   // payload) and slows retrieval.
   const safe = String(content).trim().slice(0, 800);
   const VALID_CATS = new Set(['fact', 'preference', 'project', 'entity', 'procedural']);
@@ -528,7 +595,7 @@ ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
       // -l en + -bs 2 shaves multiple seconds off a typical dictation clip
       // vs. -l auto with default beam search, at no quality cost for English.
       const args = ['-m', modelPath, '-f', inputFile, '-l', 'en', '-bs', '2', '-t', '8', '-nt', '-np'];
-      // -ng disables GPU offload — needed when whisper.cpp's CUDA build
+      // -ng disables GPU offload - needed when whisper.cpp's CUDA build
       // doesn't support the user's GPU (e.g. Blackwell / sm_120 on older builds).
       if (useCpu) args.push('-ng');
       // Allow advanced users to append flags. spawn-style: split on whitespace,
@@ -541,7 +608,7 @@ ipcMain.handle('transcribe-audio', (event, audioData, mimeType) => {
         try { fs.unlinkSync(audioIn); } catch {}
         try { if (inputFile !== audioIn) fs.unlinkSync(inputFile); } catch {}
         if (err) {
-          // Surface stderr too — whisper-cli writes "failed to initialize whisper context"
+          // Surface stderr too - whisper-cli writes "failed to initialize whisper context"
           // and CUDA errors there, not in err.message. The renderer pattern-matches
           // these strings to suggest the CPU-mode toggle.
           const detail = (stderr || '').trim();
@@ -580,6 +647,7 @@ ipcMain.handle('clear-chat', () => {
 // ─── Settings window ───────────────────────────────────────────────────────────
 
 ipcMain.handle('open-settings', () => { createSettingsWindow(); return { success: true }; });
+ipcMain.handle('open-todo',     () => { createTodoWindow();     return { success: true }; });
 
 ipcMain.handle('get-settings', () => ({
   appShortcuts: SettingsStore.getAppShortcuts(),
@@ -593,7 +661,7 @@ ipcMain.handle('save-settings', (event, settings) => {
 
     // Validate shortcuts: name + path must be non-empty strings; args must be
     // an array (or a string we'll defer-split). The path itself is a user
-    // choice — we don't whitelist binaries — but reject obviously dangerous
+    // choice - we don't whitelist binaries - but reject obviously dangerous
     // patterns so a typo'd settings save can't permanently arm the launcher.
     const appShortcuts = [];
     for (const s of appShortcutsRaw) {
@@ -726,7 +794,7 @@ ipcMain.handle('fetch-ollama-models', async () => {
   catch (error) { console.error('Error fetching Ollama models:', error); return { success: false, models: [] }; }
 });
 
-// Per-model capability lookup (e.g. ['completion','tools','thinking']) — used by
+// Per-model capability lookup (e.g. ['completion','tools','thinking']) - used by
 // the UI to decide whether to show the reasoning-effort toggle. Cached forever
 // per model name since capabilities are baked into the model on `ollama create`.
 const _ollamaModelCapsCache = new Map();
@@ -809,7 +877,7 @@ ipcMain.handle('save-ollama-url', (_, { url } = {}) => {
   // Refuse anything that doesn't parse as http(s) on a private/loopback host.
   // Otherwise a poisoned settings file could silently redirect every Ollama
   // request to an external server, exfiltrating prompts and memory facts.
-  const candidate = (url || '').trim() || 'http://localhost:11434';
+  const candidate = (url || '').trim() || 'http://127.0.0.1:11434';
   let parsed;
   try { parsed = new URL(candidate); }
   catch { return { success: false, error: 'Invalid URL.' }; }
@@ -832,18 +900,32 @@ ipcMain.handle('save-ollama-url', (_, { url } = {}) => {
 
 ipcMain.handle('get-hotkey',  () => ({ hotkey: SettingsStore.getHotkey() }));
 ipcMain.handle('save-hotkey', (_, { hotkey: newHotkey } = {}) => {
-  const key = (newHotkey || 'CommandOrControl+Shift+Space').trim();
+  const key = String(newHotkey || '').trim() || DEFAULT_HOTKEY;
+  const oldHotkey = SettingsStore.getHotkey() || process.env.HOTKEY || DEFAULT_HOTKEY;
+
+  // The new accelerator can fail two ways: register() returns false when another
+  // application already owns it, and it THROWS when the string is malformed. Both
+  // happen after the old binding is gone, so restore it either way - otherwise a
+  // typo leaves the user with no way to summon the window until they restart.
+  const restore = () => {
+    try { globalShortcut.register(oldHotkey, () => toggleWindow()); } catch {}
+  };
+
   try {
-    const oldHotkey = SettingsStore.getHotkey();
-    globalShortcut.unipcMain.handle(oldHotkey);
-    const ok = globalShortcut.register(key, () => toggleWindow());
-    if (!ok) {
-      globalShortcut.register(oldHotkey, () => toggleWindow());
-      return { success: false, error: `Could not register hotkey: ${key}` };
+    // No-op if it was never registered.
+    globalShortcut.unregister(oldHotkey);
+
+    if (!globalShortcut.register(key, () => toggleWindow())) {
+      restore();
+      return { success: false, error: `"${key}" is already taken by another application.` };
     }
+
     SettingsStore.setHotkey(key);
-    return { success: true };
-  } catch (err) { return { success: false, error: err.message }; }
+    return { success: true, hotkey: key };
+  } catch (err) {
+    restore();
+    return { success: false, error: `"${key}" isn't a valid shortcut (${err.message}).` };
+  }
 });
 
 // ─── Wake word ─────────────────────────────────────────────────────────────────
@@ -934,7 +1016,7 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
   if (!sessionId) return { success: false, error: 'No active session' };
 
   // Permission policy is read fresh on every message so the title-bar toggle
-  // takes effect immediately — no need to start a new chat after flipping it.
+  // takes effect immediately - no need to start a new chat after flipping it.
   const policy = SettingsStore.getAutoApproveAllTools()
     ? PermissionPolicy.fullyOpen()
     : PermissionPolicy.forChat();

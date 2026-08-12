@@ -2,7 +2,7 @@ const axios = require('axios');
 
 /**
  * Groq cloud inference service.
- * OpenAI-compatible API — ultra-fast inference for Llama, DeepSeek, Mixtral, etc.
+ * OpenAI-compatible API - ultra-fast inference for Llama, DeepSeek, Mixtral, etc.
  * API key read from GROQ_API_KEY env var or SettingsStore (so it can be set in UI).
  */
 class GroqService {

@@ -98,7 +98,7 @@ async function handler(args) {
         if (launched) return;
         launched = true;
         console.error(`Failed to launch ${browserType} (${exePath}):`, err.message);
-        // Graceful fallback — open in default browser instead of crashing
+        // Graceful fallback - open in default browser instead of crashing
         try { await shell.openExternal(targetUrl); } catch (_) {}
         resolve();
       });

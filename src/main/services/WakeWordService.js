@@ -1,5 +1,5 @@
 /**
- * WakeWordService — local wake-word detection via OpenWakeWord (ONNX).
+ * WakeWordService - local wake-word detection via OpenWakeWord (ONNX).
  *
  * Pipeline (three chained ONNX models, all run in the main process):
  *   raw int16 audio @ 16 kHz
@@ -36,8 +36,32 @@ const WAKE_WINDOW      = 16;     // wake model expects 16 embeddings
 // Each 80ms chunk produces FRAMES_PER_CHUNK new mel frames (measured: 5 on the
 // stock openWakeWord v0.5.1 melspec model). The embedding window slides by this
 // many frames per chunk, so we get exactly one new embedding per chunk in
-// steady state — and one wake check per 80 ms.
+// steady state - and one wake check per 80 ms.
 const FRAMES_PER_CHUNK = 5;
+
+/**
+ * Single-threaded ONNX sessions - the single biggest lever on this file.
+ *
+ * ONNX Runtime defaults intraOpNumThreads to the machine's core count. These
+ * three models are tiny (a mel filterbank, a small conv net, a 16x96 classifier)
+ * and run 12.5 times a second forever, so the thread pool's dispatch and
+ * spin-wait cost dwarfs the arithmetic - and spreads it over every core, which
+ * is what spins up the fans.
+ *
+ * Measured on a 24-core box, 20 s of audio through the full pipeline:
+ *   default            8.30 s CPU  = 41.5% of one core
+ *   intraOp/interOp 1  0.16 s CPU  =  0.8% of one core
+ *
+ * A 52x reduction with no latency cost: the pipeline still runs ~50x faster than
+ * real time single-threaded, because each inference is far too small to
+ * parallelise usefully.
+ */
+const SESSION_OPTS = {
+  intraOpNumThreads: 1,
+  interOpNumThreads: 1,
+  executionMode: 'sequential',
+  graphOptimizationLevel: 'all',
+};
 
 const PHRASE_MODELS = {
   hey_jarvis:  { file: 'hey_jarvis_v0.1.onnx',  display: 'Hey Jarvis'  },
@@ -49,10 +73,10 @@ const PHRASE_MODELS = {
 class WakeWordService {
   /**
    * @param {object}   opts
-   * @param {string}   opts.modelDir   – Directory for cached ONNX files
-   * @param {Function} opts.onWake     – Called as onWake(prob: number) on detection
-   * @param {number}   [opts.threshold=0.5]   – Wake probability threshold
-   * @param {number}   [opts.cooldownMs=2000] – Min ms between wake events
+   * @param {string}   opts.modelDir   - Directory for cached ONNX files
+   * @param {Function} opts.onWake     - Called as onWake(prob: number) on detection
+   * @param {number}   [opts.threshold=0.5]   - Wake probability threshold
+   * @param {number}   [opts.cooldownMs=2000] - Min ms between wake events
    */
   constructor({ modelDir, onWake, threshold = 0.40, strongThreshold = 0.55, cooldownMs = 1500 } = {}) {
     this.modelDir         = modelDir;
@@ -101,16 +125,16 @@ class WakeWordService {
       try {
         await this._ensureModels(phraseId);
         const dir = this.modelDir;
-        this._melsec    = await ort.InferenceSession.create(path.join(dir, 'melspectrogram.onnx'));
-        this._embedding = await ort.InferenceSession.create(path.join(dir, 'embedding_model.onnx'));
-        this._wake      = await ort.InferenceSession.create(path.join(dir, PHRASE_MODELS[phraseId].file));
+        this._melsec    = await ort.InferenceSession.create(path.join(dir, 'melspectrogram.onnx'), SESSION_OPTS);
+        this._embedding = await ort.InferenceSession.create(path.join(dir, 'embedding_model.onnx'), SESSION_OPTS);
+        this._wake      = await ort.InferenceSession.create(path.join(dir, PHRASE_MODELS[phraseId].file), SESSION_OPTS);
         this._phraseId  = phraseId;
         this._loaded    = true;
         this.reset();
         // Pre-warm: run ~2.5 s of silence through the pipeline so the mel +
         // embedding buffers are already full when the user starts speaking.
         // Without this, the first detection has to wait ~2.5 s for buffers to
-        // fill — that's what made the test button feel sluggish on first try.
+        // fill - that's what made the test button feel sluggish on first try.
         await this._prewarm();
         console.log(`[WakeWord] Loaded "${PHRASE_MODELS[phraseId].display}", buffers pre-warmed`);
       } finally {
@@ -122,7 +146,7 @@ class WakeWordService {
 
   async _prewarm() {
     // Push 2.5 s of zero audio through processing so buffers fill up. We
-    // suppress the onWake callback during this — we don't want a spurious
+    // suppress the onWake callback during this - we don't want a spurious
     // detection on synthetic silence (and the threshold should prevent it
     // anyway, but defensive is cheap).
     const realOnWake = this.onWake;

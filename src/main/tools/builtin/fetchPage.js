@@ -1,10 +1,10 @@
 /**
- * fetch_page — fetches a URL and returns clean readable text.
+ * fetch_page - fetches a URL and returns clean readable text.
  * No headless browser needed: uses Node's built-in https/http.
  *
  * Hardening:
  *  - Only http(s) is allowed (no file://, javascript:, etc.).
- *  - The destination host must be a public IP — loopback (127.0.0.0/8, ::1),
+ *  - The destination host must be a public IP - loopback (127.0.0.0/8, ::1),
  *    link-local (169.254.0.0/16, fe80::/10), private RFC1918 ranges, and
  *    cloud metadata hostnames are refused. This blocks LLM-driven SSRF
  *    against the user's local Ollama, internal admin panels, etc.
@@ -72,7 +72,7 @@ function _isBlockedIp(ip) {
     if (lower.startsWith('fe80')) return true;   // link-local
     if (lower.startsWith('fc')   || lower.startsWith('fd'))   return true; // ULA
     if (lower.startsWith('::ffff:')) {
-      // IPv4-mapped — re-check the embedded v4 address
+      // IPv4-mapped - re-check the embedded v4 address
       const v4 = lower.slice(7);
       return _isBlockedIp(v4);
     }
@@ -86,7 +86,7 @@ async function _assertSafeUrl(rawUrl) {
   try { parsed = new URL(rawUrl); }
   catch { throw new Error(`Invalid URL: ${rawUrl}`); }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`Refusing protocol "${parsed.protocol}" — only http(s) is allowed.`);
+    throw new Error(`Refusing protocol "${parsed.protocol}" - only http(s) is allowed.`);
   }
   const host = parsed.hostname.toLowerCase();
   if (BLOCKED_HOSTNAMES.has(host) || host.endsWith('.local') || host.endsWith('.internal')) {
@@ -160,7 +160,7 @@ function fetchRaw(url, redirectsLeft = MAX_REDIRECTS, signal = null) {
     // once and always tear down the timer + abort listener. The previous
     // version attached the abort listener inside the response callback, which
     // meant a server that hung BEFORE sending any headers couldn't be cancelled
-    // — the Stop button effectively did nothing for the first ~15 s.
+    // - the Stop button effectively did nothing for the first ~15 s.
     let settled = false;
     let req = null;
     const overallTimer = setTimeout(() => {
@@ -204,7 +204,7 @@ function fetchRaw(url, redirectsLeft = MAX_REDIRECTS, signal = null) {
         // Follow redirects (each new hop revalidates the host via _assertSafeUrl).
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
-          // Hand off to a fresh promise — but mark this one settled first so
+          // Hand off to a fresh promise - but mark this one settled first so
           // our timer + abort listener get cleaned up. The fresh fetchRaw call
           // re-attaches its own abort listener under the same signal.
           settled = true;

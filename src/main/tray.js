@@ -19,7 +19,7 @@ function setupTray(mainWindow) {
 
   tray = new Tray(icon);
 
-  // Defensive helpers — calling .show()/.hide() on a destroyed BrowserWindow
+  // Defensive helpers - calling .show()/.hide() on a destroyed BrowserWindow
   // throws. Always check before touching it.
   const _alive = () => mainWindow && !mainWindow.isDestroyed();
   const _show  = () => { if (_alive()) { mainWindow.show(); mainWindow.focus(); } };
