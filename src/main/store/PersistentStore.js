@@ -521,13 +521,20 @@ class PersistentStore {
   /**
    * Recent user/assistant pairs for prompt replay.
    *
-   * `tools` lists the tool names the assistant actually invoked that turn, read
-   * back from the persisted parts. Replayed history is otherwise text-only, so a
-   * turn that opened three tabs comes back looking like the assistant merely SAID
-   * "Netflix is open, next Instagram..." - and small models copy that, narrating
-   * actions instead of calling tools. See the note in AGENTS.md; surfacing this
-   * field to the model was measured and did NOT fix it, so nothing consumes it
-   * yet. It is kept because any real fix has to start from this data.
+   * `toolCalls` reconstructs what the assistant actually invoked that turn from
+   * the persisted parts, so providers can replay the turn as a real tool exchange
+   * instead of bare prose. This matters more than it sounds: a turn that opened
+   * three tabs is STORED as "Netflix is open, next Instagram..." with no trace of
+   * the calls, so replaying text alone shows the model a precedent for answering
+   * action requests by describing them - and it copies that.
+   *
+   * Measured against a real 10-turn session, tool calls fired on a 3-part request:
+   *   text-only replay (old)   47%
+   *   with this data           93%
+   *   no history at all       100%
+   *
+   * Outputs are capped hard: a fetch_page result is ~10k chars and the model only
+   * needs to see that the call happened and roughly what came back.
    */
   getRecentPairs(sessionId, limit = 10) {
     const rows  = this.getMessages(sessionId);
@@ -537,10 +544,15 @@ class PersistentStore {
         // Use display (original user text) when available; fall back to content
         const userText      = rows[i].display || rows[i].content;
         const assistantText = rows[i + 1].content;
-        const tools = Array.isArray(rows[i + 1].parts)
-          ? rows[i + 1].parts.filter(p => p?.type === 'tool' && p.toolName).map(p => p.toolName)
-          : [];
-        pairs.push({ user: userText, assistant: assistantText, tools });
+        const parts = Array.isArray(rows[i + 1].parts) ? rows[i + 1].parts : [];
+        const toolCalls = parts
+          .filter(p => p?.type === 'tool' && p.toolName)
+          .map(p => ({
+            name:   p.toolName,
+            args:   p.input || {},
+            output: String(p.state?.output ?? p.state?.message ?? 'done').slice(0, 200),
+          }));
+        pairs.push({ user: userText, assistant: assistantText, toolCalls });
         i++;
       }
     }

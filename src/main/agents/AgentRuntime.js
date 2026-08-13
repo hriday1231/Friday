@@ -192,7 +192,9 @@ class AgentRuntime {
     );
     for (const turn of history) {
       provider.appendUser(messages, turn.user);
-      provider.appendHistoryAssistant(messages, turn.assistant);
+      // turn.toolCalls is honoured by providers that can replay a tool exchange;
+      // the rest ignore it and fall back to text-only replay.
+      provider.appendHistoryAssistant(messages, turn.assistant, turn.toolCalls);
     }
     provider.appendUser(messages, message, images);
 

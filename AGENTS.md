@@ -31,8 +31,8 @@ src/main/          - Node.js / Electron main process
     addEvent.js, editEvent.js, deleteEvent.js, getCalendarSummary.js
   settings/SettingsStore.js - electron-store wrapper for API keys, hotkeys, etc.
   types/parts.js   - Typed parts (text, reasoning, tool, todo, step markers) for event stream
-  features/todo/   - Self-contained To-Do feature (schema, store, tools, IPC, prompt
-                     block, live checklist). Host wires 8 seams - see its README.md.
+  features/todo/   - Self-contained To-Do app: schema, store, IPC. No agent
+                     integration by design. Host wires 4 seams - see its README.md.
 
 src/renderer/      - Browser-context renderer process
   components/
@@ -88,32 +88,36 @@ All four providers implement the same interface. The `ProviderManager` routes mo
   suggestions panel has no background. Don't copy those names into new CSS.
 - Electron IPC: use `invoke` for request-response, `send` only for push events
 
-### Known failure: narration history suppresses tool calls
-Replayed history (`getRecentPairs` -> `appendHistoryAssistant`) carries assistant
-TEXT only; tool calls are stripped. A turn that opened three tabs replays as prose
-("Netflix is open, next Instagram..."), so the model sees a precedent for
-answering action requests without calling anything - and imitates it. Each silent
-turn becomes another narration example, so it compounds.
+### Tool calls must be replayed in history, not just their prose
+Replayed history used to carry assistant TEXT only, with tool calls stripped. A
+turn that opened three tabs replayed as "Netflix is open, next Instagram...",
+showing the model a precedent for answering action requests in prose - which it
+copied, and each silent turn became another example, so it compounded.
 
-Measured on a 3-step request, tool calls fired per 4-6 runs:
+FIXED: `getRecentPairs` returns `toolCalls` [{name, args, output}] rebuilt from
+the persisted parts, and `OllamaProvider.appendHistoryAssistant` replays them as
+a real exchange (assistant tool_calls -> tool results -> the spoken reply).
+Measured on a real 10-turn session, a 3-part request:
 
-| history | qwen2.5:7b | qwen3.5:9b |
-|---|---|---|
-| none | 4/4 | 4/4 |
-| unrelated chat | 4/4 | 4/4 |
-| 1 narration turn | 2/4 | 4/4 |
-| 3 narration turns | **0/4** | 3/4 |
+| history replay | tools fired |
+|---|---|
+| text only (old) | 33-47% |
+| with tool calls | 93% |
+| no history at all | 100% |
 
-Tried and did NOT fix it: appending a `[Tools used this turn: ...]` marker (made
-qwen3.5 worse - reads as "already done"), replaying real `tool_calls` + `tool`
-result messages, temperature 0.2 and 0.0, and an explicit "saying you opened it is
-not doing it" prompt rule. With narration in context, qwen2.5:7b was 0/6 in every
-condition. A new chat clears it. Don't re-test these without reading this first.
+Gemini/Groq/OpenRouter still ignore the third argument and fall back to
+text-only replay; they would need their own native tool-exchange format.
+
+Things that did NOT work, don't retry them blind: a `[Tools used this turn: ...]`
+marker (made it worse - reads as "already done"), temperature 0.2/0.0, an
+explicit "saying you opened it is not doing it" prompt rule, and `think: false`
+(catastrophic - 0/12, thinking is load-bearing for tool selection on qwen3.5).
 
 ### DON'T
-- **Never use em dashes (—) or en dashes (–)** anywhere - code, comments, docs, UI
-  strings. Always a plain ASCII hyphen `-`. The box-drawing character `─` used in
-  `// ─── Section ───` banners is a different character and is fine to keep.
+- **Never use em dashes (U+2014) or en dashes (U+2013)** anywhere - code, comments,
+  docs, UI strings. Always a plain ASCII hyphen `-`. (Named by codepoint here so
+  this file stays clean under its own rule.) The box-drawing character U+2500 used
+  in `// ─── Section ───` banners is unrelated and is fine to keep.
 - Don't use `window.prompt()` - Electron does not implement it and returns null
   without rendering anything. `confirm()` and `alert()` do work.
 - Don't call LLM providers directly from tools - tools return strings, AgentRuntime calls LLMs

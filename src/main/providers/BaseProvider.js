@@ -33,6 +33,14 @@ class BaseProvider {
 
   initMessages()          { throw new Error(`${this.constructor.name}: initMessages not implemented`); }
   appendUser()            { throw new Error(`${this.constructor.name}: appendUser not implemented`); }
+  /**
+   * appendHistoryAssistant(messages, text, toolCalls?)
+   *
+   * `toolCalls` is [{name, args, output}] for the tools that turn actually ran.
+   * Providers that can express a tool exchange should replay it - text-only
+   * replay teaches the model to narrate actions instead of calling tools (see
+   * OllamaProvider). Ignoring the argument is safe and keeps the old behaviour.
+   */
   appendHistoryAssistant(){ throw new Error(`${this.constructor.name}: appendHistoryAssistant not implemented`); }
   appendResponse()        { throw new Error(`${this.constructor.name}: appendResponse not implemented`); }
   appendToolResults()     { throw new Error(`${this.constructor.name}: appendToolResults not implemented`); }
