@@ -56,6 +56,8 @@ class PersistentStore {
     if (fs.existsSync(this._metaPath)) {
       this._importFromJson();
     }
+
+    this._purgeOrphanedMessages();
   }
 
   // ─── Schema migrations ─────────────────────────────────────────────────────
@@ -159,6 +161,32 @@ class PersistentStore {
     this._scheduleSave();
   }
 
+  /**
+   * Delete messages whose session no longer exists.
+   *
+   * These are chats the user already deleted in the UI. They survived because
+   * sql.js export() reopens the connection and drops PRAGMA foreign_keys, so
+   * ON DELETE CASCADE stopped firing after the first flush (see _flushNow). The
+   * rows were invisible in the sidebar but still on disk - and still readable by
+   * anything that queried the messages table directly.
+   *
+   * Runs once per launch. It is cheap when clean and self-healing when not.
+   */
+  _purgeOrphanedMessages() {
+    try {
+      const { c } = this._get(
+        `SELECT COUNT(*) AS c FROM messages
+          WHERE session_id NOT IN (SELECT id FROM sessions)`
+      ) ?? { c: 0 };
+      if (!c) return;
+      this._run(`DELETE FROM messages WHERE session_id NOT IN (SELECT id FROM sessions)`);
+      this._flushNow();
+      console.log(`[PersistentStore] purged ${c} orphaned message(s) from deleted chats`);
+    } catch (err) {
+      console.error('[PersistentStore] orphan purge failed:', err.message);
+    }
+  }
+
   // ─── Legacy JSON import ────────────────────────────────────────────────────
 
   _importFromJson() {
@@ -255,6 +283,13 @@ class PersistentStore {
     // OS shutdown / power loss. rename() is atomic on the same filesystem on
     // both Windows (since Vista) and POSIX.
     const data = this._db.export();
+    // sql.js export() closes and REOPENS the connection to read the file back.
+    // PRAGMA foreign_keys is per-connection, so it silently reverts to OFF here -
+    // meaning every flush disabled referential integrity for the rest of the
+    // process. That is how deleted chats left their messages behind for months:
+    // ON DELETE CASCADE stopped firing and writes to a dead session_id were
+    // accepted instead of rejected. Re-arm it on the new connection.
+    this._db.run('PRAGMA foreign_keys = ON;');
     const tmp  = this._dbPath + '.tmp';
     let fd;
     try {

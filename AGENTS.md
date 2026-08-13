@@ -113,6 +113,27 @@ marker (made it worse - reads as "already done"), temperature 0.2/0.0, an
 explicit "saying you opened it is not doing it" prompt rule, and `think: false`
 (catastrophic - 0/12, thinking is load-bearing for tool selection on qwen3.5).
 
+### sql.js export() silently disables PRAGMA foreign_keys
+`Database.export()` closes and reopens the connection to read the file back, and
+`PRAGMA foreign_keys` is per-connection - so every debounced flush reverted it to
+OFF. Referential integrity was live only until the first write hit disk. Deleted
+chats left their messages behind for months (ON DELETE CASCADE stopped firing,
+and writes to a dead `session_id` were accepted instead of rejected).
+`_flushNow` now re-arms the pragma after every export, and `_purgeOrphanedMessages`
+cleans up at startup. If you add another `export()` call site, re-arm it there too.
+
+Turning enforcement back on means a stale `session_id` from the renderer now
+THROWS rather than silently orphaning, so `send-agent-message` validates the
+session exists and falls back before writing.
+
+### Don't offer tools that cannot succeed
+`launch_app` was registered with zero app shortcuts configured, and the model
+reached for it on any unfamiliar token ("Open MKT" -> launch_app 4/4). It is now
+registered only when `listAppShortcutNames()` is non-empty. Similarly, listing
+bookmark names in `open_bookmark`'s description made the model treat it as a
+lookup table and answer without calling anything ("I already know Vidbox is a
+valid alias"), so the names are no longer spelled out.
+
 ### DON'T
 - **Never use em dashes (U+2014) or en dashes (U+2013)** anywhere - code, comments,
   docs, UI strings. Always a plain ASCII hyphen `-`. (Named by codepoint here so

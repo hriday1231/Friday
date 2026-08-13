@@ -203,20 +203,29 @@ function registerBuiltinTools(registry) {
   registry.registerBuiltin(braveSearchDecl.name, braveSearchDecl, braveSearchHandler);
 
   const appNames = SettingsStore.listAppShortcutNames();
-  const launchSuffix = appNames.length
-    ? ` Known app shortcuts: ${appNames.join(', ')}.`
-    : ' Configure app shortcuts in Settings so Friday can launch them by name.';
-  registry.registerBuiltin(launchAppDecl.name, {
-    ...launchAppDecl,
-    description: (launchAppDecl.description || '') + launchSuffix,
-  }, launchAppHandler);
+  // Only offer launch_app when there is something it could actually launch. With
+  // no shortcuts configured every call fails, and the model reached for it on any
+  // unfamiliar token - "Open MKT" became launch_app four times out of four. An
+  // unusable tool is worse than no tool: it costs prompt tokens and misroutes.
+  if (appNames.length) {
+    registry.registerBuiltin(launchAppDecl.name, {
+      ...launchAppDecl,
+      description: `${launchAppDecl.description || ''} Known app shortcuts: ${appNames.join(', ')}.`,
+    }, launchAppHandler);
+  } else {
+    registry.builtinTools?.delete(launchAppDecl.name);
+  }
 
   registry.registerBuiltin(openUrlDecl.name, openUrlDecl, openUrlHandler);
 
-  const bookmarkNames = SettingsStore.listBookmarkNames();
-  const bookmarkSuffix = bookmarkNames.length
-    ? ` Known bookmarks/aliases: ${bookmarkNames.join(', ')}.`
-    : ' Configure web bookmarks/aliases in Settings so Friday can open them by name.';
+  // Deliberately NOT listing the bookmark names here any more. Spelling them out
+  // made the model treat the description as a lookup table - one turn's reasoning
+  // read "I don't need a tool call here, I already know Vidbox is a valid alias"
+  // and it answered without opening anything. The handler resolves names itself,
+  // so the model only needs to know the tool exists.
+  const bookmarkSuffix = SettingsStore.listBookmarkNames().length
+    ? ''
+    : ' No bookmarks are configured yet; the user can add them in Settings.';
   registry.registerBuiltin(openBookmarkDecl.name, {
     ...openBookmarkDecl,
     description: (openBookmarkDecl.description || '') + bookmarkSuffix,
@@ -1012,7 +1021,16 @@ ipcMain.handle('send-agent-message', async (event, data = {}) => {
   const { message, displayMessage, model, modelType, sessionId: reqSessionId, images = [], forceSearch = false, incognito = false, reasoningEffort = null } = data;
   if (!agentRuntime || !model) return { success: false, error: 'AgentRuntime not ready' };
 
-  const sessionId = incognito ? INCOGNITO_SESSION_ID : (reqSessionId || activeSessionId);
+  // The renderer caches the session it is viewing, so deleting that chat leaves it
+  // holding a dead id. That used to write orphaned messages (foreign keys were
+  // silently off - see PersistentStore._flushNow); now that they are enforced the
+  // same write would throw and lose the turn. Fall back to a session that exists.
+  let sessionId = incognito ? INCOGNITO_SESSION_ID : (reqSessionId || activeSessionId);
+  if (!incognito && store && (!sessionId || !store.getSession(sessionId))) {
+    sessionId = (store.getSession(activeSessionId) && activeSessionId)
+      || store.createSession(null, 'chat').id;
+    activeSessionId = sessionId;
+  }
   if (!sessionId) return { success: false, error: 'No active session' };
 
   // Permission policy is read fresh on every message so the title-bar toggle

@@ -5,7 +5,9 @@ const SettingsStore = require('../../settings/SettingsStore');
 const declaration = {
   name: 'open_bookmark',
   description:
-    'Open a known bookmark (or alias) in the browser. Use this when the user refers to a site by a friendly name like \"YT\" or \"Insta\". ' +
+    'Open one of the user\'s SAVED BOOKMARKS. Only use this when they explicitly refer to their bookmarks or saved shortcuts - ' +
+    '"open my X bookmark", "look in my bookmarks for X", "open my saved X". ' +
+    'For a plain site name or URL ("open netflix", "open vidbox.vc") use open_url instead, even if a bookmark of that name exists. ' +
     'Optional browser can be \"default\", \"edge\" or \"brave\", and incognito can request private mode.',
   parameters: {
     type: 'object',
